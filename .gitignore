@@ -1,0 +1,9 @@
+data/
+.venv/
+.ipynb_checkpoints/
+checkpoints/
+eval_results/
+swanlog/
+__pycache__/
+*.log
+outputs/
