@@ -1,7 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "synthesis-from-text"
-version = "0.1.0"
+name = "gem"
+dynamic = ["version"]
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
+
+[tool.hatch.version]
+path = "src/gem/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gem"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/gem/",
+    "README.md",
+    "pyproject.toml",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.14",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+exclude = [
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "__pycache__",
+    ".git",
+    ".github",
+    "**/*.ipynb",
+]
+extend-include = ["*.py"]
+lint.select = ["E", "F", "W", "UP", "I"]
+lint.ignore = ["E203", "E501"]
+lint.fixable = ["ALL"]
