@@ -93,7 +93,7 @@ All candidate tools in JSON, OPENAI format.
     {
         "name": "",
         "description": "",
-        "inputSchema": {
+        "parameters": {
             "type": "",
             "properties": { },
             "required": []
@@ -112,7 +112,7 @@ All candidate tools in JSON, OPENAI format.
 <assistant>
 ...
 <func>
-{{"name": "...", "arguments": {{...}}}}
+{"name": "...", "arguments": {...}}
 </func>
 </assistant>
 <tool>

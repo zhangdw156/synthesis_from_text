@@ -1,0 +1,32 @@
+# 模型基础路径
+##############################
+# TODO: To be modified
+##############################
+model: "/dfs/data/models/Qwen3-8B"
+served_model_name: "Qwen3-8B"
+
+# 基础设置
+trust_remote_code: true
+host: "0.0.0.0"
+port: 8000
+
+# =========================================================
+# 多卡并行与显存优化
+# =========================================================
+
+tensor_parallel_size: 1
+gpu_memory_utilization: 0.8
+
+# 增大最大并发序列数，应对 5 个实验同时发来的大量请求
+max_num_seqs: 64
+
+# 性能与显存
+max_model_len: 65536
+swap_space: 16
+
+# 工具调用设置
+enable_auto_tool_choice: true
+tool_call_parser: "hermes"
+
+dtype: "bfloat16"
+

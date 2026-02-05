@@ -15,7 +15,7 @@ You are a agent specialized in retail domain. Here are some basic rules to follo
 </system>
 
 2. User Task: Create natural, progressive user requests that test the system’s rule enforcement and constraint handling. Here are some features:
-- Naturalness: Requests should reflect real-world use cases
+- Naturalness: Requests should reflect real-world use cases.
 - Ambiguity: User requests are often incomplete, requiring the assistant to analyze or clarify them.
   Example: <user> I want to cancel order #W2575533. </user> (the user do not provide the specific reason, and the assistant should ask for clarification); <user> Recommend me a desktop. I often go out. </user> (the user do not explicitly state the attribute of the item, but the assistant should analyze and know it based on the stated preference)
 - Consistent: User’s intention, persona, and their behavior should be consistent across the dialogue.
@@ -32,9 +32,8 @@ You are a agent specialized in retail domain. Here are some basic rules to follo
   (Requires: check multiple constraints)
 
 3. Assistant: Generate Responses that Demonstrate Rule Enforcement, Clear Communication, and Intelligent Problem-Solving:
-- Reasoning and Adaptive Planning: The Assistant should reason through problem contexts and plan appropriate steps. Sometimes users may not be able to directly provide the parameters for tool calls, and the assistant needs to accurately consider whether the
-parameter values can be obtained through other information and tools.
-- Precondition Checks: Before executing tasks, the Assistant should validate any necessary preconditions (e.g., authenticating identity, verifying the status of an order)
+- Reasoning and Adaptive Planning: The Assistant should reason through problem contexts and plan appropriate steps. Sometimes users may not be able to directly provide the parameters for tool calls, and the assistant needs to accurately consider whether the parameter values can be obtained through other information and tools.
+- Precondition Checks: Before executing tasks, the Assistant should validate any necessary preconditions (e.g., authenticating identity, verifying the status of an order).
 - Domain Rules and Constraints: The Assistant must follow domain-specific rules at all times. Ensure the assistant’s tool call and response genuinely addresses those requirements.
 - User-Centric Principle: The Assistant must accurately understand and satisfy all user needs and preferences without breaking domain rules. For example, if user states "prefers A, wants B, and tell me C", the assistant should satisfy all requirements.
 - No Hallucination:
@@ -48,7 +47,7 @@ parameter values can be obtained through other information and tools.
   - Parameter Validation: The arguments passed to the tools must exactly match the tool definitions, including the required parameters. The Assistant should avoid any missing parameters and validate that the values are accurate.
 
 4. Tool Responses: Structured and Complete
-- Correctness of Tool Call: A success response should only be returned if the tool call is correct (including both the correct function name and parameters). If any part of the tool call is incorrect or incomplete, the tool should return a failure response, indicating what went wrong
+- Correctness of Tool Call: A success response should only be returned if the tool call is correct (including both the correct function name and parameters). If any part of the tool call is incorrect or incomplete, the tool should return a failure response, indicating what went wrong.
 - Success Response: The tool’s success response must return all relevant information in a well-structured format (e.g., JSON). This includes not just the requested data, but also any other relevant details, such as order ID, status, product ID, item ID, etc., in case the user requires further context.
 - Error Response: When there is an error, the tool should return only the error message. No additional information should be provided that directly aids the Assistant in recovering from the error.
 - Consistent Response Structure: The format and content of the tool’s responses should remain consistent throughout the conversation. This ensures clarity and reliability in the tool’s output, helping to maintain a smooth user experience.
@@ -64,7 +63,7 @@ parameter values can be obtained through other information and tools.
 - Don’t confuse the order between rounds: a user message or tool result should be followed by an assistant message. If the assistant message includes a tool call, it can be followed by a tool message; otherwise, it should be followed by a user message. Tool result cannot followed by user message.
 - Tool call format:
 <func>
-{"name": "exact_tool_name_in_toolsets", "arguments": {{"arg": "value"}}}}
+{"name": "exact_tool_name_in_toolsets", "arguments": {"arg": "value"}}
 </func>
 
 ## Given Inputs
@@ -88,7 +87,7 @@ Ensure ALL tags are properly opened and closed. Conversations like "<tool> ... <
 <assistant>
 ...
 <func>
-{{"name": "...", "arguments": {{...}}}}
+{"name": "...", "arguments": {...}}
 </func>
 </assistant>
 <tool>

@@ -1,0 +1,7 @@
+{
+    "multi_step": false,
+    "summary": "",
+    "domain": "",
+    "platform": "",
+    "task": ""
+}
