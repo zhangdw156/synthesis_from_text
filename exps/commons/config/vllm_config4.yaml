@@ -18,7 +18,7 @@ tensor_parallel_size: 4
 gpu_memory_utilization: 0.90
 
 # 增大最大并发序列数
-max_num_seqs: 256
+max_num_seqs: 64
 
 # 性能与显存
 max_model_len: 65536

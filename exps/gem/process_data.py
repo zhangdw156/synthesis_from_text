@@ -192,7 +192,7 @@ def main(cfg: DictConfig) -> None:
     new_failed = 0
     total_processed = 0
     start_time_total = time.time()
-    next_checkpoint_at = save_every_n  # 再累计多少条成功时写 checkpoint
+    next_checkpoint_at = save_every_n
 
     if target_success is not None:
         pbar = tqdm(total=target_success - current_success, desc="Success", unit="ok")
