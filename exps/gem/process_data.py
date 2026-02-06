@@ -133,15 +133,23 @@ def process_single_item(
 
 
 def append_success_record(output_path: Path, data_id: str, trajectory: dict) -> None:
-    """向 JSONL 追加一条成功记录（仅 data_id + trajectory）"""
+    """向 JSONL 追加一条成功记录（仅 data_id + trajectory）。
+
+    写入内容即为传入的 trajectory 字典，无二次修改。若发现文件里轨迹为空，
+    可开 DEBUG 日志查看写前的 n_conversation/n_toolsets 以确认是上游为空还是写丢。
+    """
+    conv = trajectory.get("conversation") or []
+    tools = trajectory.get("toolsets") or []
+    logger.debug(
+        "append_success_record data_id=%s n_conversation=%s n_toolsets=%s",
+        data_id,
+        len(conv),
+        len(tools),
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"data_id": data_id, "trajectory": trajectory}
     with open(output_path, "a", encoding="utf-8") as f:
-        f.write(
-            json.dumps(
-                {"data_id": data_id, "trajectory": trajectory}, ensure_ascii=False
-            )
-            + "\n"
-        )
+        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
@@ -219,7 +227,7 @@ def main(cfg: DictConfig) -> None:
         swanlab_cfg = getattr(cfg, "swanlab", None)
         use_swanlab = getattr(swanlab_cfg, "use_swanlab", False) if swanlab_cfg else False
     if use_swanlab:
-        project = getattr(swanlab_cfg, "project", "gem-synthesis") or "gem-synthesis"
+        project = getattr(swanlab_cfg, "project", "synthesis_from_text") or "gem-synthesis"
         exp_name = getattr(swanlab_cfg, "experiment_name", None)
         if exp_name is None or (isinstance(exp_name, str) and not exp_name.strip()):
             exp_name = "process_data_" + datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -290,13 +298,26 @@ def main(cfg: DictConfig) -> None:
                     }
                 total_processed += 1
 
-                if res["success"] and res.get("final_trajectory") is not None:
+                # 仅当成功且轨迹非空（有 conversation）才写入并计为成功
+                traj = res.get("final_trajectory")
+                if traj is not None and logger.isEnabledFor(logging.DEBUG):
+                    conv = traj.get("conversation") or []
+                    logger.debug(
+                        "result data_id=%s success=%s len(conversation)=%s",
+                        data_id,
+                        res.get("success"),
+                        len(conv),
+                    )
+                trajectory_valid = (
+                    traj is not None
+                    and isinstance(traj.get("conversation"), list)
+                    and len(traj.get("conversation", [])) > 0
+                )
+                if res["success"] and trajectory_valid:
                     current_success += 1
                     new_success += 1
                     success_ids.add(data_id)
-                    append_success_record(
-                        final_output, data_id, res["final_trajectory"]
-                    )
+                    append_success_record(final_output, data_id, traj)
                     if target_success is not None:
                         pbar.update(1)
                     next_checkpoint_at -= 1
@@ -305,7 +326,11 @@ def main(cfg: DictConfig) -> None:
                         next_checkpoint_at = save_every_n
                 else:
                     new_failed += 1
-                    failed_stages[data_id] = res.get("failure_stage") or "unknown"
+                    failed_stages[data_id] = (
+                        "empty_trajectory"
+                        if (res.get("success") and not trajectory_valid)
+                        else (res.get("failure_stage") or "unknown")
+                    )
                     save_checkpoint(checkpoint_path, success_ids, failed_stages)
                 if target_success is None:
                     pbar.update(1)

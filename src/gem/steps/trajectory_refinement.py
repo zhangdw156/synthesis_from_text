@@ -70,6 +70,12 @@ class TrajectoryRefinementStep(PipelineStep[Trajectory]):
             if not trajectory:
                 logger.warning("Trajectory refinement: Failed to parse response")
                 return None
+            # 拒绝空轨迹，避免将“解析成功但内容为空”当作成功保存
+            if not trajectory.conversation:
+                logger.warning(
+                    "Trajectory refinement: Parsed trajectory has empty conversation, rejecting"
+                )
+                return None
 
             logger.info(
                 f"Trajectory refinement: Refined to {len(trajectory.conversation)} messages"
