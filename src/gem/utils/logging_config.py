@@ -42,3 +42,7 @@ def setup_logging(
         rich_tracebacks=True,
     )
     root.addHandler(handler)
+
+    # 屏蔽 httpx/httpcore 的 HTTP 请求 INFO 日志，避免控制台和日志文件刷屏
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)

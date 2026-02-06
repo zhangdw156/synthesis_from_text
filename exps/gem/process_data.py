@@ -110,7 +110,7 @@ def process_single_item(
         "failure_stage": None,
     }
     try:
-        out = pipeline.run(text)
+        out = pipeline.run(text, data_id=data_id)
         if isinstance(out, PipelineFailure):
             result["failure_stage"] = out.stage
             result["processing_time"] = time.time() - start_time
@@ -288,7 +288,6 @@ def main(cfg: DictConfig) -> None:
                     success=current_success,
                     failed=len(failed_stages),
                     pending=len(pending) - pending_idx,
-                    ok=new_success,
                 )
                 break  # 处理一个完成后即跳出，以便再次检查是否已达标并提交新任务
 

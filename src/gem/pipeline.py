@@ -150,80 +150,98 @@ class SynthesisPipeline:
             text = text[:_DEBUG_OUTPUT_MAX_CHARS] + "\n... (truncated)"
         logger.debug("[%s] output:\n%s", step_name, text)
 
-    def run(self, raw_text: str) -> PipelineResult | PipelineFailure:
+    def run(
+        self, raw_text: str, data_id: str | None = None
+    ) -> PipelineResult | PipelineFailure:
         """执行完整流水线
 
         Args:
             raw_text: 原始纯文本输入
+            data_id: 可选，当前条目的数据标识，用于日志中区分不同数据
 
         Returns:
             成功: PipelineResult（含 final_trajectory 与全部中间结果）
             失败: PipelineFailure（含 stage，用于 checkpoint failed_stages）
         """
+        prefix = f"[data_id={data_id}] " if data_id else ""
         logger.info("=" * 60)
-        logger.info("Starting synthesis pipeline")
+        logger.info("%sStarting synthesis pipeline", prefix)
         logger.info("=" * 60)
 
         # Step 1: 标签标注（<multi_step> 非 True 则不执行后续步骤）
-        logger.info("Step 1: Tag annotation")
+        logger.info("%sStep 1: Tag annotation", prefix)
         annotation = self.tag_annotation_step.execute(raw_text)
         self._log_step_output("tag_annotation", annotation)
         if annotation is None:
-            logger.info("Pipeline aborted at tag annotation step")
+            logger.info("%sPipeline aborted at tag annotation step", prefix)
             return PipelineFailure(stage="tag_annotation")
         if not annotation.multi_step:
             logger.info(
-                "Pipeline aborted: <multi_step> is not True, skip remaining steps"
+                "%sPipeline aborted: <multi_step> is not True, skip remaining steps",
+                prefix,
             )
             return PipelineFailure(stage="tag_annotation")
 
         # Step 2: 工作流发现
-        logger.info("Step 2: Workflow discovery")
+        logger.info("%sStep 2: Workflow discovery", prefix)
         workflows = self.workflow_discovery_step.execute_with_text(raw_text)
         self._log_step_output("workflow_discovery", workflows)
         if not workflows:
-            logger.info("Pipeline aborted at workflow discovery step")
+            logger.info("%sPipeline aborted at workflow discovery step", prefix)
             return PipelineFailure(stage="workflow_discovery")
         # 仅保留 actions 与 tools 均非空的工作流，否则不执行后续步骤
         workflows = [w for w in workflows if w.actions and w.tools]
         if not workflows:
-            logger.info("Pipeline aborted: all workflows have empty actions or tools")
+            logger.info(
+                "%sPipeline aborted: all workflows have empty actions or tools",
+                prefix,
+            )
             return PipelineFailure(stage="workflow_discovery")
 
         # 处理每个工作流，记录最远失败阶段
         last_failure_stage = "trajectory_generation"
         for i, workflow in enumerate(workflows):
-            logger.info(f"Processing workflow {i + 1}/{len(workflows)}")
+            logger.info("%sProcessing workflow %s/%s", prefix, i + 1, len(workflows))
 
             # Step 3: 轨迹生成
-            logger.info("  Step 3: Trajectory generation")
+            logger.info("%s  Step 3: Trajectory generation", prefix)
             dialogue = self.trajectory_generation_step.execute((workflow, i))
             self._log_step_output("trajectory_generation", dialogue)
             if dialogue is None:
-                logger.warning(f"  Workflow {i + 1}: Failed at trajectory generation")
+                logger.warning(
+                    "%s  Workflow %s: Failed at trajectory generation",
+                    prefix,
+                    i + 1,
+                )
                 last_failure_stage = "trajectory_generation"
                 continue
 
             # Step 4: 轨迹优化
-            logger.info("  Step 4: Trajectory refinement")
+            logger.info("%s  Step 4: Trajectory refinement", prefix)
             trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
             self._log_step_output("trajectory_refinement", trajectory)
             if trajectory is None:
-                logger.warning(f"  Workflow {i + 1}: Failed at trajectory refinement")
+                logger.warning(
+                    "%s  Workflow %s: Failed at trajectory refinement",
+                    prefix,
+                    i + 1,
+                )
                 last_failure_stage = "trajectory_refinement"
                 continue
 
             # Step 5: 幻觉检测
-            logger.info("  Step 5: Hallucination detection")
+            logger.info("%s  Step 5: Hallucination detection", prefix)
             final_trajectory = self.hallucination_detection_step.execute(trajectory)
             self._log_step_output("hallucination_detection", final_trajectory)
             if final_trajectory is None:
-                logger.warning(f"  Workflow {i + 1}: Failed hallucination check")
+                logger.warning(
+                    "%s  Workflow %s: Failed hallucination check", prefix, i + 1
+                )
                 last_failure_stage = "hallucination_detection"
                 continue
 
             # 成功完成一个工作流，返回最终轨迹与全部中间结果
-            logger.info(f"  Workflow {i + 1}: Successfully completed!")
+            logger.info("%s  Workflow %s: Successfully completed!", prefix, i + 1)
             return PipelineResult(
                 final_trajectory=final_trajectory,
                 tag_annotation=annotation,
@@ -232,20 +250,24 @@ class SynthesisPipeline:
                 dialogue=dialogue,
             )
 
-        logger.info("All workflows failed, pipeline returned None")
+        logger.info("%sAll workflows failed, pipeline returned None", prefix)
         return PipelineFailure(stage=last_failure_stage)
 
-    def run_all_workflows(self, raw_text: str) -> list[PipelineResult]:
+    def run_all_workflows(
+        self, raw_text: str, data_id: str | None = None
+    ) -> list[PipelineResult]:
         """执行完整流水线，返回所有成功的工作流结果（含中间结果）
 
         Args:
             raw_text: 原始纯文本输入
+            data_id: 可选，当前条目的数据标识，用于日志中区分不同数据
 
         Returns:
             成功的 PipelineResult 列表（可能为空）
         """
+        prefix = f"[data_id={data_id}] " if data_id else ""
         logger.info("=" * 60)
-        logger.info("Starting synthesis pipeline (all workflows)")
+        logger.info("%sStarting synthesis pipeline (all workflows)", prefix)
         logger.info("=" * 60)
 
         results = []
@@ -257,7 +279,8 @@ class SynthesisPipeline:
             return results
         if not annotation.multi_step:
             logger.info(
-                "Pipeline aborted: <multi_step> is not True, skip remaining steps"
+                "%sPipeline aborted: <multi_step> is not True, skip remaining steps",
+                prefix,
             )
             return results
 
@@ -269,12 +292,15 @@ class SynthesisPipeline:
         # 仅保留 actions 与 tools 均非空的工作流，否则不执行后续步骤
         workflows = [w for w in workflows if w.actions and w.tools]
         if not workflows:
-            logger.info("Pipeline aborted: all workflows have empty actions or tools")
+            logger.info(
+                "%sPipeline aborted: all workflows have empty actions or tools",
+                prefix,
+            )
             return results
 
         # 处理每个工作流
         for i, workflow in enumerate(workflows):
-            logger.info(f"Processing workflow {i + 1}/{len(workflows)}")
+            logger.info("%sProcessing workflow %s/%s", prefix, i + 1, len(workflows))
 
             # Step 3: 轨迹生成
             dialogue = self.trajectory_generation_step.execute((workflow, i))
@@ -301,9 +327,12 @@ class SynthesisPipeline:
                         dialogue=dialogue,
                     )
                 )
-                logger.info(f"  Workflow {i + 1}: Successfully completed!")
+                logger.info("%s  Workflow %s: Successfully completed!", prefix, i + 1)
 
         logger.info(
-            f"Pipeline completed: {len(results)}/{len(workflows)} workflows succeeded"
+            "%sPipeline completed: %s/%s workflows succeeded",
+            prefix,
+            len(results),
+            len(workflows),
         )
         return results
