@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 from gem.llm.client import LLMClient
 from gem.models.annotation import TagAnnotation
@@ -47,6 +47,9 @@ STEP_NAMES = (
     "trajectory_refinement",
     "hallucination_detection",
 )
+
+# 允许重试的阶段（和数据处理脚本保持一致）
+RETRYABLE_STAGES = {"workflow_discovery", "trajectory_generation", "trajectory_refinement"}
 
 # LLMClient 支持的参数
 _LLM_KEYS = ("base_url", "model_name", "api_key", "temperature", "max_tokens", "top_p")
@@ -96,6 +99,7 @@ class SynthesisPipeline:
     5. 幻觉检测
 
     成功返回 PipelineResult，失败返回 PipelineFailure（含 stage）。
+    支持从指定阶段开始执行（用于重试，默认从 tag_annotation 开始）。
     """
 
     def __init__(self, config: PipelineConfig):
@@ -151,13 +155,18 @@ class SynthesisPipeline:
         logger.debug("[%s] output:\n%s", step_name, text)
 
     def run(
-        self, raw_text: str, data_id: str | None = None
+        self, 
+        raw_text: str, 
+        data_id: str | None = None,
+        start_stage: str = "tag_annotation"  # 重试时指定起始阶段
     ) -> PipelineResult | PipelineFailure:
-        """执行完整流水线
+        """执行完整流水线（支持从指定阶段开始）
 
         Args:
             raw_text: 原始纯文本输入
             data_id: 可选，当前条目的数据标识，用于日志中区分不同数据
+            start_stage: 起始执行阶段（默认 tag_annotation），重试时指定为 workflow_discovery
+                         可选值：tag_annotation/workflow_discovery/trajectory_generation/trajectory_refinement/hallucination_detection
 
         Returns:
             成功: PipelineResult（含 final_trajectory 与全部中间结果）
@@ -165,71 +174,91 @@ class SynthesisPipeline:
         """
         prefix = f"[data_id={data_id}] " if data_id else ""
         logger.info("=" * 60)
-        logger.info("%sStarting synthesis pipeline", prefix)
+        logger.info("%sStarting synthesis pipeline (start stage: %s)", prefix, start_stage)
         logger.info("=" * 60)
 
-        # Step 1: 标签标注（<multi_step> 非 True 则不执行后续步骤）
-        logger.info("%sStep 1: Tag annotation", prefix)
-        annotation = self.tag_annotation_step.execute(raw_text)
-        self._log_step_output("tag_annotation", annotation)
-        if annotation is None:
-            logger.info("%sPipeline aborted at tag annotation step", prefix)
-            return PipelineFailure(stage="tag_annotation")
-        if not annotation.multi_step:
-            logger.info(
-                "%sPipeline aborted: <multi_step> is not True, skip remaining steps",
-                prefix,
-            )
-            return PipelineFailure(stage="tag_annotation")
+        # 存储中间结果（用于跨阶段传递）
+        annotation: Optional[TagAnnotation] = None
+        workflows: list[Workflow] = []
 
-        # Step 2: 工作流发现
-        logger.info("%sStep 2: Workflow discovery", prefix)
-        workflows = self.workflow_discovery_step.execute_with_text(raw_text)
-        self._log_step_output("workflow_discovery", workflows)
-        if not workflows:
-            logger.info("%sPipeline aborted at workflow discovery step", prefix)
-            return PipelineFailure(stage="workflow_discovery")
-        # 仅保留 actions 与 tools 均非空的工作流，否则不执行后续步骤
-        workflows = [w for w in workflows if w.actions and w.tools]
-        if not workflows:
-            logger.info(
-                "%sPipeline aborted: all workflows have empty actions or tools",
-                prefix,
-            )
-            return PipelineFailure(stage="workflow_discovery")
+        # --------------------------
+        # 按起始阶段执行步骤
+        # --------------------------
+        # Step 1: 标签标注（仅首次执行/非重试时完整执行；重试时仅校验结果）
+        if start_stage == "tag_annotation":
+            logger.info("%sStep 1: Tag annotation", prefix)
+            annotation = self.tag_annotation_step.execute(raw_text)
+            self._log_step_output("tag_annotation", annotation)
+            if annotation is None:
+                logger.info("%sPipeline aborted at tag annotation step", prefix)
+                return PipelineFailure(stage="tag_annotation")
+            if not annotation.multi_step:
+                logger.info(
+                    "%sPipeline aborted: <multi_step> is not True, skip remaining steps",
+                    prefix,
+                )
+                return PipelineFailure(stage="tag_annotation")
+        else:
+            # 重试时（start_stage != tag_annotation）：仅校验tag_annotation结果（确保是多步任务）
+            logger.info("%sRe-validate tag annotation (retry mode)", prefix)
+            annotation = self.tag_annotation_step.execute(raw_text)
+            if annotation is None or not annotation.multi_step:
+                logger.warning("%sRetry aborted: tag annotation failed or not multi-step", prefix)
+                return PipelineFailure(stage="tag_annotation")
+
+        # Step 2: 工作流发现（起始阶段为 workflow_discovery 或更早时执行）
+        if start_stage in ["tag_annotation", "workflow_discovery"]:
+            logger.info("%sStep 2: Workflow discovery", prefix)
+            workflows = self.workflow_discovery_step.execute_with_text(raw_text)
+            self._log_step_output("workflow_discovery", workflows)
+            if not workflows:
+                logger.info("%sPipeline aborted at workflow discovery step", prefix)
+                return PipelineFailure(stage="workflow_discovery")
+            # 仅保留 actions 与 tools 均非空的工作流
+            workflows = [w for w in workflows if w.actions and w.tools]
+            if not workflows:
+                logger.info(
+                    "%sPipeline aborted: all workflows have empty actions or tools",
+                    prefix,
+                )
+                return PipelineFailure(stage="workflow_discovery")
 
         # 处理每个工作流，记录最远失败阶段
         last_failure_stage = "trajectory_generation"
         for i, workflow in enumerate(workflows):
             logger.info("%sProcessing workflow %s/%s", prefix, i + 1, len(workflows))
+            dialogue: Optional[Dialogue] = None
+            trajectory: Optional[Trajectory] = None
 
-            # Step 3: 轨迹生成
-            logger.info("%s  Step 3: Trajectory generation", prefix)
-            dialogue = self.trajectory_generation_step.execute((workflow, i))
-            self._log_step_output("trajectory_generation", dialogue)
-            if dialogue is None:
-                logger.warning(
-                    "%s  Workflow %s: Failed at trajectory generation",
-                    prefix,
-                    i + 1,
-                )
-                last_failure_stage = "trajectory_generation"
-                continue
+            # Step 3: 轨迹生成（起始阶段为 trajectory_generation 或更早时执行）
+            if start_stage in ["tag_annotation", "workflow_discovery", "trajectory_generation"]:
+                logger.info("%s  Step 3: Trajectory generation", prefix)
+                dialogue = self.trajectory_generation_step.execute((workflow, i))
+                self._log_step_output("trajectory_generation", dialogue)
+                if dialogue is None:
+                    logger.warning(
+                        "%s  Workflow %s: Failed at trajectory generation",
+                        prefix,
+                        i + 1,
+                    )
+                    last_failure_stage = "trajectory_generation"
+                    continue
 
-            # Step 4: 轨迹优化
-            logger.info("%s  Step 4: Trajectory refinement", prefix)
-            trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
-            self._log_step_output("trajectory_refinement", trajectory)
-            if trajectory is None:
-                logger.warning(
-                    "%s  Workflow %s: Failed at trajectory refinement",
-                    prefix,
-                    i + 1,
-                )
-                last_failure_stage = "trajectory_refinement"
-                continue
+            # Step 4: 轨迹优化（起始阶段为 trajectory_refinement 或更早时执行）
+            if start_stage in ["tag_annotation", "workflow_discovery", "trajectory_generation", "trajectory_refinement"]:
+                logger.info("%s  Step 4: Trajectory refinement", prefix)
+                trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
+                self._log_step_output("trajectory_refinement", trajectory)
+                if trajectory is None:
+                    logger.warning(
+                        "%s  Workflow %s: Failed at trajectory refinement",
+                        prefix,
+                        i + 1,
+                    )
+                    last_failure_stage = "trajectory_refinement"
+                    continue
 
-            # Step 5: 幻觉检测
+            # Step 5: 幻觉检测（始终执行，只要前面步骤成功）
             logger.info("%s  Step 5: Hallucination detection", prefix)
             final_trajectory = self.hallucination_detection_step.execute(trajectory)
             self._log_step_output("hallucination_detection", final_trajectory)
@@ -240,7 +269,7 @@ class SynthesisPipeline:
                 last_failure_stage = "hallucination_detection"
                 continue
 
-            # 成功完成一个工作流，返回最终轨迹与全部中间结果
+            # 成功完成一个工作流，返回最终结果
             logger.info("%s  Workflow %s: Successfully completed!", prefix, i + 1)
             return PipelineResult(
                 final_trajectory=final_trajectory,

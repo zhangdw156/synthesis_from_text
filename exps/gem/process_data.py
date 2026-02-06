@@ -2,7 +2,9 @@
 
 按「目标成功条数」持续处理，只保存最终成功轨迹；
 断点记录：成功/失败/未处理的原始数据标号；
-每累计一定数量成功即写盘一次。
+每累计一定数量成功即写盘一次；
+限制失败数据的最大重试次数，避免无限重试；
+仅允许第2、3、4阶段失败的数据重试，且重试从第2阶段开始。
 """
 
 import json
@@ -13,7 +15,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Set
 
 import hydra
 import pandas as pd
@@ -34,52 +36,67 @@ from gem import (  # noqa: E402 — 必须在 sys.path 与 load_dotenv 之后导
     setup_logging,
 )
 
-try:
-    import swanlab  # noqa: F401
-
-    _swanlab_available = True
-except ImportError:
-    swanlab = None  # type: ignore[misc, assignment]
-    _swanlab_available = False
 
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILENAME = "checkpoint.json"
 TRAJECTORIES_FILENAME = "final_trajectories.jsonl"
 
+# 允许重试的阶段列表
+RETRYABLE_STAGES = {"workflow_discovery", "trajectory_generation", "trajectory_refinement"}
+# 重试时的起始阶段
+RETRY_START_STAGE = "workflow_discovery"
+
 
 def load_checkpoint(
     checkpoint_path: Path,
-) -> tuple[set[str], dict[str, str]]:
-    """加载断点：成功 id 集合、失败 id -> 阶段名 映射（兼容旧版仅有 failed_ids 的 checkpoint）"""
-    success_ids: set[str] = set()
-    failed_stages: dict[str, str] = {}
+) -> tuple[Set[str], Dict[str, Dict[str, Any]]]:
+    """加载断点：
+    - success_ids: 成功 id 集合
+    - failed_info: 失败信息字典，结构 {data_id: {"stage": 失败阶段, "retry_count": 重试次数}}
+    兼容旧版 checkpoint（仅 success_ids + failed_stages）
+    """
+    success_ids: Set[str] = set()
+    failed_info: Dict[str, Dict[str, Any]] = {}
+    
     if checkpoint_path.exists():
         try:
             with open(checkpoint_path, encoding="utf-8") as f:
                 data = json.load(f)
             success_ids = set(data.get("success_ids", []))
-            failed_stages = dict(data.get("failed_stages", {}))
-            # 兼容旧版：仅有 failed_ids 时视为 failed_stages[id] = "unknown"
-            if not failed_stages and data.get("failed_ids"):
-                failed_stages = {k: "unknown" for k in data["failed_ids"]}
+            
+            # 兼容旧版 checkpoint（仅 failed_stages 或 failed_ids）
+            if "failed_info" in data:
+                failed_info = data["failed_info"]
+            else:
+                # 从旧版 failed_stages 迁移
+                failed_stages = dict(data.get("failed_stages", {}))
+                if not failed_stages and data.get("failed_ids"):
+                    failed_stages = {k: "unknown" for k in data["failed_ids"]}
+                # 初始化重试次数为 0
+                failed_info = {
+                    data_id: {"stage": stage, "retry_count": 0}
+                    for data_id, stage in failed_stages.items()
+                }
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Could not load checkpoint: %s", e)
-    return success_ids, failed_stages
+    return success_ids, failed_info
 
 
 def save_checkpoint(
     checkpoint_path: Path,
-    success_ids: set[str],
-    failed_stages: dict[str, str],
+    success_ids: Set[str],
+    failed_info: Dict[str, Dict[str, Any]],
 ) -> None:
-    """保存断点（success_ids + failed_stages，失败集合由 failed_stages 的 key 表示）"""
+    """保存断点（包含重试次数）"""
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    # 按 data_id 排序，保证 checkpoint 文件内容稳定
+    sorted_failed = dict(sorted(failed_info.items()))
     with open(checkpoint_path, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "success_ids": sorted(success_ids),
-                "failed_stages": dict(sorted(failed_stages.items())),
+                "failed_info": sorted_failed,
             },
             f,
             ensure_ascii=False,
@@ -108,17 +125,30 @@ def process_single_item(
     data_id: str,
     text: str,
     pipeline: SynthesisPipeline,
+    retry_count: int,  # 传入当前重试次数，用于日志
+    failure_stage: str | None = None,  # 上次失败阶段，用于判断是否从指定阶段重试
 ) -> dict[str, Any]:
-    """处理单条数据，返回是否成功、成功时的最终轨迹、或失败时的 failure_stage"""
+    """处理单条数据，返回是否成功、成功时的最终轨迹、或失败时的 failure_stage
+    重试时若失败阶段在允许列表中，直接从第2阶段（workflow_discovery）开始执行
+    """
     start_time = time.time()
+    # 打印重试次数日志
+    logger.info(f"[data_id={data_id}] Processing (retry count: {retry_count})")
     result: dict[str, Any] = {
         "data_id": data_id,
         "success": False,
         "final_trajectory": None,
         "failure_stage": None,
     }
+    
+    # 确定起始阶段：首次执行用默认（tag_annotation），重试且阶段允许则从第2阶段开始
+    start_stage = "tag_annotation"
+    if retry_count > 0 and failure_stage in RETRYABLE_STAGES:
+        start_stage = RETRY_START_STAGE
+        logger.info(f"[data_id={data_id}] Retry from stage: {start_stage} (previous failure: {failure_stage})")
+    
     try:
-        out = pipeline.run(text, data_id=data_id)
+        out = pipeline.run(text, data_id=data_id, start_stage=start_stage)
         if isinstance(out, PipelineFailure):
             result["failure_stage"] = out.stage
             result["processing_time"] = time.time() - start_time
@@ -126,7 +156,7 @@ def process_single_item(
         result["success"] = True
         result["final_trajectory"] = out.final_trajectory.model_dump()
     except Exception as e:
-        logger.error("Error processing %s: %s", data_id, e)
+        logger.error(f"[data_id={data_id}] Error processing (retry {retry_count}): %s", e)
         result["failure_stage"] = "unknown"
     result["processing_time"] = time.time() - start_time
     return result
@@ -165,6 +195,8 @@ def main(cfg: DictConfig) -> None:
     logger.info("=" * 60)
     logger.info("GEM Data Processing (target success count, checkpoint resume)")
     logger.info("=" * 60)
+    logger.info(f"Retryable stages: {RETRYABLE_STAGES}")
+    logger.info(f"Retry start stage: {RETRY_START_STAGE}")
     logger.info("Config:\n%s", OmegaConf.to_yaml(cfg))
 
     output_dir = Path(cfg.output.output_dir)
@@ -179,15 +211,18 @@ def main(cfg: DictConfig) -> None:
     else:
         target_success = int(raw)
 
+    # 读取最大重试次数配置（默认 3 次）
+    max_retry_times = int(getattr(cfg.processing, "max_retry_times", 3))
+    logger.info(f"Max retry times for failed items: {max_retry_times}")
     save_every_n = int(cfg.output.save_every_n_success)
 
-    # 断点：已成功、失败及失败阶段（failed_stages）
-    success_ids, failed_stages = load_checkpoint(checkpoint_path)
+    # 断点：已成功、失败信息（包含重试次数）
+    success_ids, failed_info = load_checkpoint(checkpoint_path)
     current_success = len(success_ids)
     logger.info(
         "Checkpoint: %d success, %d failed (resume)",
         current_success,
-        len(failed_stages),
+        len(failed_info),
     )
 
     if target_success is not None and current_success >= target_success:
@@ -199,11 +234,38 @@ def main(cfg: DictConfig) -> None:
     if content_col not in df.columns:
         raise ValueError(f"Content column {content_col!r} not in dataframe")
 
-    # 待处理：未在成功集也未在失败集（失败集合 = failed_stages 的 key）
-    processed = success_ids | set(failed_stages.keys())
+    # 待处理数据筛选逻辑：
+    # 1. 成功数据：排除
+    # 2. 失败数据：
+    #    - 失败阶段不在重试列表：排除
+    #    - 失败阶段在重试列表但重试次数达上限：排除
+    #    - 其他：加入待处理
+    processed_success = set(success_ids)
+    # 筛选出不允许重试的失败数据（阶段不在重试列表 或 重试次数达上限）
+    processed_failed_non_retryable = set()
+    processed_failed_retry_limit = set()
+    
+    for data_id, info in failed_info.items():
+        stage = info["stage"]
+        retry_count = info["retry_count"]
+        
+        # 阶段不在重试列表 → 不允许重试
+        if stage not in RETRYABLE_STAGES:
+            processed_failed_non_retryable.add(data_id)
+            logger.debug(f"[data_id={data_id}] Non-retryable failure stage: {stage}")
+        # 阶段在重试列表但次数达上限 → 不允许重试
+        elif retry_count >= max_retry_times:
+            processed_failed_retry_limit.add(data_id)
+            logger.debug(f"[data_id={data_id}] Reached max retry times: {retry_count}/{max_retry_times}")
+
+    # 最终待处理 = 所有数据 - 成功数据 - 不允许重试的失败数据 - 重试次数达上限的失败数据
+    processed = processed_success | processed_failed_non_retryable | processed_failed_retry_limit
     pending = df[~df["data_id"].isin(processed)].copy()
     pending = list(zip(pending["data_id"].tolist(), pending[content_col].tolist()))
-    logger.info("Pending items: %d", len(pending))
+    
+    logger.info(f"Pending items: {len(pending)}")
+    logger.info(f"  - Excluded non-retryable failed items: {len(processed_failed_non_retryable)}")
+    logger.info(f"  - Excluded retry limit reached items: {len(processed_failed_retry_limit)}")
 
     if not pending:
         logger.info(
@@ -220,26 +282,6 @@ def main(cfg: DictConfig) -> None:
         llm_steps=llm_steps,
     )
     max_workers = cfg.processing.max_workers
-
-    # SwanLab：若启用且在「有 pending、进入主循环前」则初始化
-    use_swanlab = False
-    if _swanlab_available:
-        swanlab_cfg = getattr(cfg, "swanlab", None)
-        use_swanlab = getattr(swanlab_cfg, "use_swanlab", False) if swanlab_cfg else False
-    if use_swanlab:
-        project = getattr(swanlab_cfg, "project", "synthesis_from_text")
-        exp_name = getattr(swanlab_cfg, "experiment_name", None)
-        if exp_name is None or (isinstance(exp_name, str) and not exp_name.strip()):
-            exp_name = "process_data_" + datetime.now().strftime("%Y%m%d_%H%M%S")
-        try:
-            swanlab.init(
-                project=project,
-                experiment_name=exp_name,
-                config=OmegaConf.to_container(cfg, resolve=True),
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("SwanLab init failed, disabling: %s", e)
-            use_swanlab = False
 
     # 统计
     new_success = 0
@@ -275,8 +317,12 @@ def main(cfg: DictConfig) -> None:
             while in_flight < max_workers * 2 and should_submit():
                 data_id, text = pending[pending_idx]
                 pending_idx += 1
+                # 获取当前数据的重试次数和上次失败阶段
+                current_retry = failed_info.get(data_id, {}).get("retry_count", 0)
+                failure_stage = failed_info.get(data_id, {}).get("stage", None)
                 pipeline = SynthesisPipeline(pipeline_config)
-                fut = executor.submit(process_single_item, data_id, text, pipeline)
+                # 传入重试次数和上次失败阶段
+                fut = executor.submit(process_single_item, data_id, text, pipeline, current_retry, failure_stage)
                 futures[fut] = data_id
                 in_flight += 1
 
@@ -317,21 +363,40 @@ def main(cfg: DictConfig) -> None:
                     current_success += 1
                     new_success += 1
                     success_ids.add(data_id)
+                    # 成功后从失败信息中移除
+                    if data_id in failed_info:
+                        del failed_info[data_id]
                     append_success_record(final_output, data_id, traj)
                     if target_success is not None:
                         pbar.update(1)
                     next_checkpoint_at -= 1
                     if next_checkpoint_at <= 0:
-                        save_checkpoint(checkpoint_path, success_ids, failed_stages)
+                        save_checkpoint(checkpoint_path, success_ids, failed_info)
                         next_checkpoint_at = save_every_n
                 else:
                     new_failed += 1
-                    failed_stages[data_id] = (
+                    # 更新失败信息（累加重试次数）
+                    failure_stage = (
                         "empty_trajectory"
                         if (res.get("success") and not trajectory_valid)
                         else (res.get("failure_stage") or "unknown")
                     )
-                    save_checkpoint(checkpoint_path, success_ids, failed_stages)
+                    # 只有允许重试的阶段才累加重试次数
+                    if failure_stage in RETRYABLE_STAGES:
+                        current_retry = failed_info.get(data_id, {}).get("retry_count", 0) + 1
+                    else:
+                        current_retry = failed_info.get(data_id, {}).get("retry_count", 0)
+                    
+                    failed_info[data_id] = {
+                        "stage": failure_stage,
+                        "retry_count": current_retry
+                    }
+                    # 打印重试次数日志
+                    retry_msg = f"{current_retry}/{max_retry_times}" if failure_stage in RETRYABLE_STAGES else "non-retryable"
+                    logger.warning(
+                        f"[data_id={data_id}] Failed (stage: {failure_stage}, retry count: {retry_msg})"
+                    )
+                    save_checkpoint(checkpoint_path, success_ids, failed_info)
                 if target_success is None:
                     pbar.update(1)
 
@@ -339,38 +404,16 @@ def main(cfg: DictConfig) -> None:
                 in_flight -= 1
                 pbar.set_postfix(
                     success=current_success,
-                    failed=len(failed_stages),
+                    failed=len(failed_info),
                     pending=len(pending) - pending_idx,
                 )
-                # SwanLab：每完成一条按 step=本 run 已处理条数 上报指标
-                if use_swanlab and total_processed > 0:
-                    elapsed = time.time() - start_time_total
-                    total_done = current_success + len(failed_stages)
-                    success_rate = (
-                        current_success / total_done if total_done else 0.0
-                    )
-                    metrics = {
-                        "process/success": current_success,
-                        "process/failed": len(failed_stages),
-                        "process/pending": len(pending) - pending_idx,
-                        "process/success_rate": success_rate,
-                        "process/duration_seconds": elapsed,
-                        "process/avg_time_per_item": (
-                            elapsed / total_processed if total_processed else 0
-                        ),
-                    }
-                    stage_counts = dict(Counter(failed_stages.values()))
-                    for stage, count in stage_counts.items():
-                        key = f"process/failed_{stage}"
-                        metrics[key] = count
-                    swanlab.log(metrics, step=total_processed)
                 break  # 处理一个完成后即跳出，以便再次检查是否已达标并提交新任务
 
             for f in done_futures:
                 del futures[f]
 
     pbar.close()
-    save_checkpoint(checkpoint_path, success_ids, failed_stages)
+    save_checkpoint(checkpoint_path, success_ids, failed_info)
 
     total_time = time.time() - start_time_total
     logger.info("=" * 60)
@@ -391,7 +434,9 @@ def main(cfg: DictConfig) -> None:
     logger.info("  Checkpoint: %s", checkpoint_path)
 
     # 按阶段统计失败数，便于分析瓶颈
-    stage_counts = dict(Counter(failed_stages.values()))
+    # 统计失败次数分布
+    failure_stage_counts = Counter([info["stage"] for info in failed_info.values()])
+    failure_retry_counts = Counter([info["retry_count"] for info in failed_info.values()])
 
     report = {
         "timestamp": datetime.now().isoformat(),
@@ -404,8 +449,11 @@ def main(cfg: DictConfig) -> None:
             "new_failed_this_run": new_failed,
             "total_processed_this_run": total_processed,
             "total_success_ids": len(success_ids),
-            "total_failed_ids": len(failed_stages),
-            "failed_stages_summary": stage_counts,
+            "total_failed_ids": len(failed_info),
+            "failed_stages_summary": dict(failure_stage_counts),
+            "failed_retry_counts_summary": dict(failure_retry_counts),  # 重试次数统计
+            "retryable_stages": list(RETRYABLE_STAGES),
+            "retry_start_stage": RETRY_START_STAGE,
             "total_time_seconds": total_time,
             "avg_time_per_item": total_time / total_processed if total_processed else 0,
         },
@@ -414,21 +462,6 @@ def main(cfg: DictConfig) -> None:
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     logger.info("  Report: %s", report_path)
-
-    if use_swanlab:
-        try:
-            swanlab.log(
-                {
-                    "process/duration_seconds": total_time,
-                    "process/avg_time_per_item": (
-                        total_time / total_processed if total_processed else 0
-                    ),
-                },
-                step=total_processed,
-            )
-            swanlab.finish()
-        except Exception as e:  # noqa: BLE001
-            logger.warning("SwanLab finish failed: %s", e)
 
 
 if __name__ == "__main__":
