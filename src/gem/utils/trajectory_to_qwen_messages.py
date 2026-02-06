@@ -3,11 +3,13 @@
 不替换原始 system_prompt，仅在其后追加 tools 块；conversation 转为 user/assistant 轮次，
 assistant 的 tool_calls 转为 <tool_call>...</tool_call>，tool 角色转为带 <tool_response> 的 user 消息。
 
-命令行用法（在项目根下）::
+命令行用法（在项目根下，任选其一）::
 
-    uv run python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl out/messages.jsonl
-    uv run python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl out/messages.jsonl --max-samples 100
-    uv run python -m gem.utils.trajectory_to_qwen_messages --help
+    uv run trajectory-to-qwen-messages syn_data/final_trajectories.jsonl syn_data/messages.jsonl
+    uv run python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl syn_data/messages.jsonl
+
+不要用 ``uv run src/gem/utils/trajectory_to_qwen_messages.py ...``，参数可能未传入。
+可选: ``--max-samples N``、``--no-truncate``。
 """
 
 from __future__ import annotations

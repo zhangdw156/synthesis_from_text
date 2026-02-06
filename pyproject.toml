@@ -23,6 +23,9 @@ dependencies = [
 [project.optional-dependencies]
 swanlab = ["swanlab"]
 
+[project.scripts]
+trajectory-to-qwen-messages = "gem.utils.trajectory_to_qwen_messages:_main"
+
 [tool.hatch.version]
 path = "src/gem/__init__.py"
 
