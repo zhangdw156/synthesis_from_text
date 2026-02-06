@@ -1,9 +1,102 @@
 [
     {
-        "description": "No valid workflow found in the provided text. The content appears to be a mix of academic questions and an advertisement for an essay writing service, which does not contain structured workflow steps or executable processes.",
-        "steps": "",
-        "execution_graph": "",
-        "actions": [],
+        "description": "Indonesian to Yiddish translation workflow with quality verification and audio playback capabilities",
+        "steps": "Step1: Input Indonesian text in original text window\nStep2: Use virtual keyboard if special characters are needed\nStep3: Run spellchecker to verify text accuracy\nStep4: Select Yiddish as target language\nStep5: Select translation provider from available options\nStep6: Execute translation by clicking Translate button\nStep7: Play TTS audio for original text (optional)\nStep8: Play TTS audio for translated text (optional)\nStep9: Open back translation window for quality verification\nStep10: Review back translation to assess accuracy\nStep11: Print translation for hard copy (optional)",
+        "execution_graph": "(input_text)->(use_virtual_keyboard)->(spellcheck_text)->(select_target_language)->(select_translation_provider)->(translate_text)->(play_tts_original)->(play_tts_translated)->(open_back_translation)->(check_back_translation)->(print_translation)",
+        "actions": [
+            {
+                "name": "input_text",
+                "arguments": {
+                    "text_content": "Halo, bagaimana kabar Anda?",
+                    "use_virtual_keyboard": false
+                }
+            },
+            {
+                "name": "use_virtual_keyboard",
+                "arguments": {
+                    "special_characters": [
+                        "á",
+                        "é",
+                        "í",
+                        "ó",
+                        "ú",
+                        "ñ"
+                    ]
+                }
+            },
+            {
+                "name": "spellcheck_text",
+                "arguments": {
+                    "text_content": "Halo, bagaimana kabar Anda?",
+                    "language": "Indonesian"
+                }
+            },
+            {
+                "name": "select_target_language",
+                "arguments": {
+                    "source_language": "Indonesian",
+                    "target_language": "Yiddish"
+                }
+            },
+            {
+                "name": "select_translation_provider",
+                "arguments": {
+                    "provider_name": "Provider_A",
+                    "provider_id": "prov_001"
+                }
+            },
+            {
+                "name": "translate_text",
+                "arguments": {
+                    "text_content": "Halo, bagaimana kabar Anda?",
+                    "source_language": "Indonesian",
+                    "target_language": "Yiddish",
+                    "provider_id": "prov_001"
+                }
+            },
+            {
+                "name": "play_tts_original",
+                "arguments": {
+                    "text_content": "Halo, bagaimana kabar Anda?",
+                    "language": "Indonesian",
+                    "voice_id": "female_indonesian_1"
+                }
+            },
+            {
+                "name": "play_tts_translated",
+                "arguments": {
+                    "text_content": "העלא, ווי געזונט זענט איר?",
+                    "language": "Yiddish",
+                    "voice_id": "male_yiddish_1"
+                }
+            },
+            {
+                "name": "open_back_translation",
+                "arguments": {
+                    "translation_id": "trans_12345",
+                    "back_language": "Indonesian"
+                }
+            },
+            {
+                "name": "check_back_translation",
+                "arguments": {
+                    "original_text": "Halo, bagaimana kabar Anda?",
+                    "back_translated_text": "Hello, how are you?",
+                    "quality_threshold": 0.85
+                }
+            },
+            {
+                "name": "print_translation",
+                "arguments": {
+                    "translation_id": "trans_12345",
+                    "print_options": {
+                        "format": "pdf",
+                        "orientation": "portrait",
+                        "copies": 1
+                    }
+                }
+            }
+        ],
         "tools": []
     }
 ]

@@ -1,7 +1,7 @@
 {
-    "multi_step": false,
-    "summary": "",
-    "domain": "",
-    "platform": "",
-    "task": ""
+    "multi_step": true,
+    "summary": "Translate text from Indonesian to Yiddish using an online translation service with features including back translation, virtual keyboard, spellchecker, and text-to-speech",
+    "domain": "internet_and_telecom",
+    "platform": "computer",
+    "task": "language_translation"
 }
