@@ -23,22 +23,35 @@ def setup_logging(
 ) -> None:
     """配置进程的 root logging。
 
+    当不传 log_file 时，仅添加控制台 handler，不替换已有 handler（保留 Hydra 等配置的 file handler）。
+    当传 log_file 时，用 basicConfig(force=True) 重置为仅控制台 + 该文件。
+
     Args:
         level: 日志级别（DEBUG, INFO, WARNING, ERROR）。
-        log_file: 若设置，同时写入该文件（UTF-8），目录不存在会创建。
+        log_file: 若设置，同时写入该文件（UTF-8），并重置 handlers。
         format: 日志格式串；None 使用 DEFAULT_FORMAT。
         **kwargs: 忽略；便于直接传入 Hydra cfg.logging。
     """
     fmt = format if format else DEFAULT_FORMAT
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    log_level = getattr(logging, (level or "INFO").upper(), logging.INFO)
+    root = logging.getLogger()
+
     if log_file:
         path = Path(log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(path, encoding="utf-8"))
+        handlers = [
+            logging.StreamHandler(),
+            logging.FileHandler(path, encoding="utf-8"),
+        ]
+        for h in handlers:
+            h.setLevel(log_level)
+            h.setFormatter(logging.Formatter(fmt))
+        logging.basicConfig(level=log_level, format=fmt, handlers=handlers, force=True)
+        return
 
-    logging.basicConfig(
-        level=getattr(logging, (level or "INFO").upper(), logging.INFO),
-        format=fmt,
-        handlers=handlers,
-        force=True,
-    )
+    # 仅控制台：不 force，只添加 StreamHandler，保留 Hydra 的 file handler
+    root.setLevel(log_level)
+    console = logging.StreamHandler()
+    console.setLevel(log_level)
+    console.setFormatter(logging.Formatter(fmt))
+    root.addHandler(console)

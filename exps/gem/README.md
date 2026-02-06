@@ -83,7 +83,7 @@ python process_data.py
 
 ### conf/gem_config.yaml（流水线配置）
 
-- **llm**：全局 LLM 配置（base_url、api_key 从环境变量或 .env 读取，见下）
+- **llm**：全局 LLM 配置（base_url、api_key、model_name 从环境变量或 .env 读取，见下）
 - **llm_steps**：各步骤可覆盖的 LLM 参数
 - **steps**：各阶段开关与 prompt 路径
 - **logging**：level、format、file
@@ -103,12 +103,12 @@ python process_data.py
 
 1. **项目根目录 .env（推荐，本地开发）**
    - 在项目根目录执行：`cp .env.example .env`
-   - 编辑 `.env`，填写 `GEM_LLM_BASE_URL`、`GEM_LLM_API_KEY`
+   - 编辑 `.env`，填写 `GEM_LLM_BASE_URL`、`GEM_LLM_API_KEY`、`GEM_LLM_MODEL_NAME`（可选）
    - `.env` 已加入 `.gitignore`，不会提交。脚本会在 Hydra 解析配置前自动加载项目根目录的 `.env`
 
 2. **环境变量（CI/容器/单次命令）**
-   - 使用 `GEM_LLM_BASE_URL`、`GEM_LLM_API_KEY`
-   - 示例：`GEM_LLM_BASE_URL="https://api.xxx.com/v1" GEM_LLM_API_KEY="sk-..." python exps/gem/process_data.py`
+   - 使用 `GEM_LLM_BASE_URL`、`GEM_LLM_API_KEY`、`GEM_LLM_MODEL_NAME`
+   - 示例：`GEM_LLM_BASE_URL="https://api.xxx.com/v1" GEM_LLM_API_KEY="sk-..." GEM_LLM_MODEL_NAME="gpt-4" python exps/gem/process_data.py`
 
 ## 注意事项
 
