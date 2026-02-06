@@ -20,6 +20,9 @@ dependencies = [
     "rich>=14.3.2",
 ]
 
+[project.optional-dependencies]
+swanlab = ["swanlab"]
+
 [tool.hatch.version]
 path = "src/gem/__init__.py"
 

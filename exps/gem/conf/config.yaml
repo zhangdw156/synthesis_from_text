@@ -28,3 +28,9 @@ output:
 processing:
   max_workers: 32             # 并行工作线程数
   request_timeout: 300      # 单个请求超时时间（秒）
+
+# SwanLab 实验记录（可选，需安装 swanlab：pip install swanlab 或 uv sync --extra swanlab）
+swanlab:
+  use_swanlab: false
+  project: "gem-synthesis"
+  experiment_name: null      # null 则用 "process_data_<timestamp>"

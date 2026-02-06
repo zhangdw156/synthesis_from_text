@@ -34,6 +34,14 @@ from gem import (  # noqa: E402 — 必须在 sys.path 与 load_dotenv 之后导
     setup_logging,
 )
 
+try:
+    import swanlab  # noqa: F401
+
+    _swanlab_available = True
+except ImportError:
+    swanlab = None  # type: ignore[misc, assignment]
+    _swanlab_available = False
+
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILENAME = "checkpoint.json"
@@ -205,6 +213,26 @@ def main(cfg: DictConfig) -> None:
     )
     max_workers = cfg.processing.max_workers
 
+    # SwanLab：若启用且在「有 pending、进入主循环前」则初始化
+    use_swanlab = False
+    if _swanlab_available:
+        swanlab_cfg = getattr(cfg, "swanlab", None)
+        use_swanlab = getattr(swanlab_cfg, "use_swanlab", False) if swanlab_cfg else False
+    if use_swanlab:
+        project = getattr(swanlab_cfg, "project", "gem-synthesis") or "gem-synthesis"
+        exp_name = getattr(swanlab_cfg, "experiment_name", None)
+        if exp_name is None or (isinstance(exp_name, str) and not exp_name.strip()):
+            exp_name = "process_data_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+        try:
+            swanlab.init(
+                project=project,
+                experiment_name=exp_name,
+                config=OmegaConf.to_container(cfg, resolve=True),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("SwanLab init failed, disabling: %s", e)
+            use_swanlab = False
+
     # 统计
     new_success = 0
     new_failed = 0
@@ -289,6 +317,28 @@ def main(cfg: DictConfig) -> None:
                     failed=len(failed_stages),
                     pending=len(pending) - pending_idx,
                 )
+                # SwanLab：每完成一条按 step=本 run 已处理条数 上报指标
+                if use_swanlab and total_processed > 0:
+                    elapsed = time.time() - start_time_total
+                    total_done = current_success + len(failed_stages)
+                    success_rate = (
+                        current_success / total_done if total_done else 0.0
+                    )
+                    metrics = {
+                        "process/success": current_success,
+                        "process/failed": len(failed_stages),
+                        "process/pending": len(pending) - pending_idx,
+                        "process/success_rate": success_rate,
+                        "process/duration_seconds": elapsed,
+                        "process/avg_time_per_item": (
+                            elapsed / total_processed if total_processed else 0
+                        ),
+                    }
+                    stage_counts = dict(Counter(failed_stages.values()))
+                    for stage, count in stage_counts.items():
+                        key = f"process/failed_{stage}"
+                        metrics[key] = count
+                    swanlab.log(metrics, step=total_processed)
                 break  # 处理一个完成后即跳出，以便再次检查是否已达标并提交新任务
 
             for f in done_futures:
@@ -339,6 +389,21 @@ def main(cfg: DictConfig) -> None:
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
     logger.info("  Report: %s", report_path)
+
+    if use_swanlab:
+        try:
+            swanlab.log(
+                {
+                    "process/duration_seconds": total_time,
+                    "process/avg_time_per_item": (
+                        total_time / total_processed if total_processed else 0
+                    ),
+                },
+                step=total_processed,
+            )
+            swanlab.finish()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("SwanLab finish failed: %s", e)
 
 
 if __name__ == "__main__":
