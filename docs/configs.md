@@ -23,15 +23,14 @@ Hydra 会在 `pkg://gem.configs` 对应的包目录下查找 config group，例�
 
 ## hydra/gem_preset.yaml
 
-用于关闭 Hydra 默认输出行为并关闭 Hydra 自带的 job 日志：
+用于关闭 Hydra 默认输出行为（不改 job_logging）：
 
 - `run.dir: .` — 不创建带时间戳的输出目录
 - `output_subdir: null` — 不创建 `.hydra/`
 - `job.chdir: false` — 不切换工作目录
-- `job_logging` — 已内置为“关闭”效果（不另打一份 process_data.log），日志由 `gem.setup_logging` 和你的 `logging.file` 控制
 
-实验只需在 `defaults` 里写 `hydra: gem_preset`，无需再写 `override hydra/job_logging: disabled`。
+文件日志由 Hydra 默认 `job_logging` 负责；控制台日志由应用侧 `setup_logging(level=..., format=...)` 负责（不传 `log_file`）。
 
 ## logging/default.yaml
 
-日志默认配置（level、format、file）。实验可在主配置的 `defaults` 中引用，例如 `logging: default`，则先得到包内默认，再被 `gem_config.yaml` 等后续配置覆盖。最终 `cfg.logging` 传给 `gem.setup_logging(**cfg.logging)`。
+日志默认配置（level、format；可选 file，仅作配置占位，应用只把 level/format 用于控制台）。实验在主配置的 `defaults` 中引用 `logging: default` 后，由 `gem_config.yaml` 等覆盖。应用仅用 `cfg.logging` 的 level、format 调用 `setup_logging(level=..., format=...)`，不向文件写日志，文件日志由 Hydra 负责。

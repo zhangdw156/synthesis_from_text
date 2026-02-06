@@ -139,10 +139,10 @@ def append_success_record(output_path: Path, data_id: str, trajectory: dict) -> 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     """主函数：只保存成功轨迹，断点记录成功/失败/未处理，按成功数定期保存"""
+    # 只配置控制台日志；文件日志交给 Hydra 默认 job_logging
     log_cfg = getattr(cfg, "logging", None) or {}
     setup_logging(
         level=getattr(log_cfg, "level", "INFO"),
-        log_file=getattr(log_cfg, "file", None),
         format=getattr(log_cfg, "format", None),
     )
 
