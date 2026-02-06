@@ -227,7 +227,7 @@ def main(cfg: DictConfig) -> None:
         swanlab_cfg = getattr(cfg, "swanlab", None)
         use_swanlab = getattr(swanlab_cfg, "use_swanlab", False) if swanlab_cfg else False
     if use_swanlab:
-        project = getattr(swanlab_cfg, "project", "synthesis_from_text") or "gem-synthesis"
+        project = getattr(swanlab_cfg, "project", "synthesis_from_text")
         exp_name = getattr(swanlab_cfg, "experiment_name", None)
         if exp_name is None or (isinstance(exp_name, str) and not exp_name.strip()):
             exp_name = "process_data_" + datetime.now().strftime("%Y%m%d_%H%M%S")
