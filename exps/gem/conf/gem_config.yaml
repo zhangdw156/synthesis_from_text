@@ -1,5 +1,4 @@
 # GEM 流水线配置
-# 从 examples/conf/config.yaml 复制
 
 llm:
   base_url: "http://localhost:8000/v1"
@@ -12,23 +11,23 @@ llm:
 steps:
   tag_annotation:
     enabled: true
-    prompt_path: "../../src/gem/prompts/tag_annotation.md"
+    prompt_path: "src/gem/prompts/tag_annotation.md"
   
   workflow_discovery:
     enabled: true
-    prompt_path: "../../src/gem/prompts/workflow_and_tool_discovery.md"
+    prompt_path: "src/gem/prompts/workflow_and_tool_discovery.md"
   
   trajectory_generation:
     enabled: true
-    prompt_path: "../../src/gem/prompts/trajectory_generation.md"
+    prompt_path: "src/gem/prompts/trajectory_generation.md"
   
   trajectory_refinement:
     enabled: true
-    prompt_path: "../../src/gem/prompts/trajectory_refinement.md"
+    prompt_path: "src/gem/prompts/trajectory_refinement.md"
   
   hallucination_detection:
     enabled: true
-    prompt_path: "../../src/gem/prompts/hallucination_detection.md"
+    prompt_path: "src/gem/prompts/hallucination_detection.md"
 
 logging:
   level: "INFO"
