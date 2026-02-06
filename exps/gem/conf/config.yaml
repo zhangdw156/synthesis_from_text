@@ -1,0 +1,25 @@
+# GEM 实验配置
+
+defaults:
+  - gem_config
+  - _self_
+
+# 数据配置
+data:
+  input_path: "../../data/ultrafineweb-en-part-0036-of-2048.parquet"
+  sample_size: 100          # 采样数量
+  random_seed: 42           # 随机种子
+  content_column: "content" # 文本列名
+
+# 输出配置
+output:
+  output_dir: "./outputs"
+  batch_size: 10            # 每处理多少条保存一次
+  save_trajectory_jsonl: true   # 保存最终轨迹
+  save_intermediate_jsonl: true # 保存中间步骤结果
+
+# 处理配置
+processing:
+  max_workers: 4            # 并行工作线程数
+  request_timeout: 300      # 单个请求超时时间（秒）
+  continue_from: null       # 从上次中断处继续（checkpoint 文件路径）
