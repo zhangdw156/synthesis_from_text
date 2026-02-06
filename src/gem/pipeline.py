@@ -17,6 +17,9 @@ from gem.steps.workflow_discovery import WorkflowDiscoveryStep
 
 logger = logging.getLogger(__name__)
 
+# 调试时每个 step 输出的最大字符数，避免刷屏
+_DEBUG_OUTPUT_MAX_CHARS = 4000
+
 
 @dataclass
 class PipelineResult:
@@ -138,6 +141,15 @@ class SynthesisPipeline:
         step_cfg = steps_cfg.get(step_name, {})
         return step_cfg.get("prompt_path", default_paths.get(step_name, ""))
 
+    def _log_step_output(self, step_name: str, output: Any) -> None:
+        """当日志级别为 DEBUG 时，将步骤输出打印到控制台，便于调试。"""
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        text = repr(output) if output is not None else "None"
+        if len(text) > _DEBUG_OUTPUT_MAX_CHARS:
+            text = text[:_DEBUG_OUTPUT_MAX_CHARS] + "\n... (truncated)"
+        logger.debug("[%s] output:\n%s", step_name, text)
+
     def run(self, raw_text: str) -> PipelineResult | PipelineFailure:
         """执行完整流水线
 
@@ -155,6 +167,7 @@ class SynthesisPipeline:
         # Step 1: 标签标注（<multi_step> 非 True 则不执行后续步骤）
         logger.info("Step 1: Tag annotation")
         annotation = self.tag_annotation_step.execute(raw_text)
+        self._log_step_output("tag_annotation", annotation)
         if annotation is None:
             logger.info("Pipeline aborted at tag annotation step")
             return PipelineFailure(stage="tag_annotation")
@@ -167,6 +180,7 @@ class SynthesisPipeline:
         # Step 2: 工作流发现
         logger.info("Step 2: Workflow discovery")
         workflows = self.workflow_discovery_step.execute_with_text(raw_text)
+        self._log_step_output("workflow_discovery", workflows)
         if not workflows:
             logger.info("Pipeline aborted at workflow discovery step")
             return PipelineFailure(stage="workflow_discovery")
@@ -184,6 +198,7 @@ class SynthesisPipeline:
             # Step 3: 轨迹生成
             logger.info("  Step 3: Trajectory generation")
             dialogue = self.trajectory_generation_step.execute((workflow, i))
+            self._log_step_output("trajectory_generation", dialogue)
             if dialogue is None:
                 logger.warning(f"  Workflow {i + 1}: Failed at trajectory generation")
                 last_failure_stage = "trajectory_generation"
@@ -192,6 +207,7 @@ class SynthesisPipeline:
             # Step 4: 轨迹优化
             logger.info("  Step 4: Trajectory refinement")
             trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
+            self._log_step_output("trajectory_refinement", trajectory)
             if trajectory is None:
                 logger.warning(f"  Workflow {i + 1}: Failed at trajectory refinement")
                 last_failure_stage = "trajectory_refinement"
@@ -200,6 +216,7 @@ class SynthesisPipeline:
             # Step 5: 幻觉检测
             logger.info("  Step 5: Hallucination detection")
             final_trajectory = self.hallucination_detection_step.execute(trajectory)
+            self._log_step_output("hallucination_detection", final_trajectory)
             if final_trajectory is None:
                 logger.warning(f"  Workflow {i + 1}: Failed hallucination check")
                 last_failure_stage = "hallucination_detection"
@@ -235,6 +252,7 @@ class SynthesisPipeline:
 
         # Step 1: 标签标注（<multi_step> 非 True 则不执行后续步骤）
         annotation = self.tag_annotation_step.execute(raw_text)
+        self._log_step_output("tag_annotation", annotation)
         if annotation is None:
             return results
         if not annotation.multi_step:
@@ -245,6 +263,7 @@ class SynthesisPipeline:
 
         # Step 2: 工作流发现
         workflows = self.workflow_discovery_step.execute_with_text(raw_text)
+        self._log_step_output("workflow_discovery", workflows)
         if not workflows:
             return results
         # 仅保留 actions 与 tools 均非空的工作流，否则不执行后续步骤
@@ -259,16 +278,19 @@ class SynthesisPipeline:
 
             # Step 3: 轨迹生成
             dialogue = self.trajectory_generation_step.execute((workflow, i))
+            self._log_step_output("trajectory_generation", dialogue)
             if dialogue is None:
                 continue
 
             # Step 4: 轨迹优化
             trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
+            self._log_step_output("trajectory_refinement", trajectory)
             if trajectory is None:
                 continue
 
             # Step 5: 幻觉检测
             final_trajectory = self.hallucination_detection_step.execute(trajectory)
+            self._log_step_output("hallucination_detection", final_trajectory)
             if final_trajectory is not None:
                 results.append(
                     PipelineResult(
