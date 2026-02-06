@@ -4,10 +4,10 @@
 # base_url / api_key 从环境变量读取，未设置时用默认值；本地可在项目根目录放 .env（见 .env.example）
 llm:
   base_url: ${oc.env:GEM_LLM_BASE_URL,http://localhost:8000/v1}
-  model_name: "Qwen3-8B"
+  model_name: "MiniMax-M2.1"
   api_key: ${oc.env:GEM_LLM_API_KEY,dummy_key}
-  temperature: 0.7
-  max_tokens: 40960
+  temperature: 0.5
+  max_tokens: 20480
   top_p: 0.95
 
 # 各阶段单独的大模型配置（可选），只写要覆盖的字段，未写则用上面 llm
