@@ -48,4 +48,5 @@ steps:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/process_data.log"  # set to a path to also write logs to a file
+  # file 由 Hydra job_logging 负责，此处仅占位；应用只用 level/format 配置控制台
+  file: null
