@@ -1,6 +1,6 @@
 """数据合成主工作流"""
 
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import logging
 from dataclasses import dataclass
 
@@ -20,14 +20,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PipelineConfig:
-    """流水线配置"""
-    llm_client: LLMClient
-    # 各步骤的 prompt 路径（可选，使用默认值）
-    tag_annotation_prompt: Optional[str] = None
-    workflow_discovery_prompt: Optional[str] = None
-    trajectory_generation_prompt: Optional[str] = None
-    trajectory_refinement_prompt: Optional[str] = None
-    hallucination_detection_prompt: Optional[str] = None
+    """流水线配置（与 Hydra 配置结构对应）"""
+    llm: Dict[str, Any]
+    steps: Dict[str, Dict[str, Any]]
 
 
 class SynthesisPipeline:
@@ -46,27 +41,53 @@ class SynthesisPipeline:
     def __init__(self, config: PipelineConfig):
         self.config = config
         
+        # 从配置创建 LLM 客户端
+        llm_cfg = config.llm
+        llm_client = LLMClient(
+            base_url=llm_cfg.get("base_url", "http://localhost:8000/v1"),
+            model_name=llm_cfg.get("model_name", "Qwen3-8B"),
+            api_key=llm_cfg.get("api_key", "dummy_key"),
+            temperature=llm_cfg.get("temperature", 0.7),
+            max_tokens=llm_cfg.get("max_tokens", 40960),
+            top_p=llm_cfg.get("top_p", 0.95),
+        )
+        
+        # 从配置获取各步骤的 prompt 路径
+        steps_cfg = config.steps
+        
         # 初始化各步骤
         self.tag_annotation_step = TagAnnotationStep(
-            config.llm_client,
-            config.tag_annotation_prompt or "src/gem/prompts/tag_annotation.md"
+            llm_client,
+            self._get_prompt_path(steps_cfg, "tag_annotation")
         )
         self.workflow_discovery_step = WorkflowDiscoveryStep(
-            config.llm_client,
-            config.workflow_discovery_prompt or "src/gem/prompts/workflow_and_tool_discovery.md"
+            llm_client,
+            self._get_prompt_path(steps_cfg, "workflow_discovery")
         )
         self.trajectory_generation_step = TrajectoryGenerationStep(
-            config.llm_client,
-            config.trajectory_generation_prompt or "src/gem/prompts/trajectory_generation.md"
+            llm_client,
+            self._get_prompt_path(steps_cfg, "trajectory_generation")
         )
         self.trajectory_refinement_step = TrajectoryRefinementStep(
-            config.llm_client,
-            config.trajectory_refinement_prompt or "src/gem/prompts/trajectory_refinement.md"
+            llm_client,
+            self._get_prompt_path(steps_cfg, "trajectory_refinement")
         )
         self.hallucination_detection_step = HallucinationDetectionStep(
-            config.llm_client,
-            config.hallucination_detection_prompt or "src/gem/prompts/hallucination_detection.md"
+            llm_client,
+            self._get_prompt_path(steps_cfg, "hallucination_detection")
         )
+    
+    def _get_prompt_path(self, steps_cfg: Dict, step_name: str) -> str:
+        """获取步骤的 prompt 路径"""
+        default_paths = {
+            "tag_annotation": "src/gem/prompts/tag_annotation.md",
+            "workflow_discovery": "src/gem/prompts/workflow_and_tool_discovery.md",
+            "trajectory_generation": "src/gem/prompts/trajectory_generation.md",
+            "trajectory_refinement": "src/gem/prompts/trajectory_refinement.md",
+            "hallucination_detection": "src/gem/prompts/hallucination_detection.md",
+        }
+        step_cfg = steps_cfg.get(step_name, {})
+        return step_cfg.get("prompt_path", default_paths.get(step_name, ""))
     
     def run(self, raw_text: str) -> Optional[Trajectory]:
         """执行完整流水线

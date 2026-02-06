@@ -5,7 +5,6 @@
 
 __version__ = "0.1.0.dev"
 
-from gem.llm.client import LLMClient
 from gem.pipeline import SynthesisPipeline, PipelineConfig
 from gem.models import (
     TagAnnotation,
@@ -20,7 +19,6 @@ from gem.models import (
 
 __all__ = [
     "__version__",
-    "LLMClient",
     "SynthesisPipeline",
     "PipelineConfig",
     "TagAnnotation",
