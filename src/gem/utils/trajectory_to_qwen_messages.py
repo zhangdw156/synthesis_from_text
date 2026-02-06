@@ -2,11 +2,18 @@
 
 不替换原始 system_prompt，仅在其后追加 tools 块；conversation 转为 user/assistant 轮次，
 assistant 的 tool_calls 转为 <tool_call>...</tool_call>，tool 角色转为带 <tool_response> 的 user 消息。
+
+命令行用法（在项目根下）::
+
+    uv run python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl out/messages.jsonl
+    uv run python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl out/messages.jsonl --max-samples 100
+    uv run python -m gem.utils.trajectory_to_qwen_messages --help
 """
 
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -191,3 +198,54 @@ class TrajectoryToQwenMessages:
                 fout.write(json.dumps(out, ensure_ascii=False) + "\n")
                 count += 1
         return count
+
+
+def _main() -> None:
+    """命令行入口：输入为数据合成后的 JSONL，输出为 OpenAI messages 格式的 JSONL。"""
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-h", "--help"):
+        print(
+            "用法: python -m gem.utils.trajectory_to_qwen_messages <合成轨迹.jsonl> <输出messages.jsonl> [--max-samples N] [--no-truncate]",
+            file=sys.stderr,
+        )
+        print(
+            "示例: python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl out/messages.jsonl",
+            file=sys.stderr,
+        )
+        sys.exit(0 if "--help" in argv or "-h" in argv else 1)
+    if len(argv) < 2:
+        print("请提供两个参数：输入 JSONL 与输出 JSONL 路径", file=sys.stderr)
+        sys.exit(1)
+    input_path = Path(argv[0])
+    output_path = Path(argv[1])
+    max_samples = -1
+    truncate = True
+    i = 2
+    while i < len(argv):
+        if argv[i] == "--max-samples" and i + 1 < len(argv):
+            try:
+                max_samples = int(argv[i + 1])
+            except ValueError:
+                print(f"无效 --max-samples: {argv[i+1]}", file=sys.stderr)
+                sys.exit(1)
+            i += 2
+            continue
+        if argv[i] == "--no-truncate":
+            truncate = False
+            i += 1
+            continue
+        i += 1
+    if not input_path.exists():
+        print(f"输入文件不存在: {input_path}", file=sys.stderr)
+        sys.exit(1)
+    converter = TrajectoryToQwenMessages(truncate_at_last_tool_call=truncate)
+    try:
+        count = converter.convert_jsonl(input_path, output_path, max_samples=max_samples)
+    except OSError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
+    print(f"已写入 {count} 条到 {output_path}")
+
+
+if __name__ == "__main__":
+    _main()
