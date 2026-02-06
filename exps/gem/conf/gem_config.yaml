@@ -44,9 +44,3 @@ steps:
   hallucination_detection:
     enabled: true
     prompt_path: "src/gem/prompts/hallucination_detection.md"
-
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  # file 由 Hydra job_logging 负责，此处仅占位；应用只用 level/format 配置控制台
-  file: null

@@ -1,6 +1,2 @@
-# 日志默认配置，供实验在 defaults 中引用（如 optional logging: default）
-# 实验可在 gem_config 或主配置中覆盖 level / format / file
-
 level: INFO
 format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-file: null

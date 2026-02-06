@@ -1,8 +1,5 @@
-# Hydra preset: 不建时间戳输出目录、不建 .hydra/、不 chdir
-# 文件日志由 Hydra 默认 job_logging 负责；控制台日志由应用 setup_logging 负责
-
 run:
-  dir: .
+  dir: logs/${now:%Y-%m-%d}
 output_subdir: null
 job:
   chdir: false
