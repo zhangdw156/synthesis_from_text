@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 class TagAnnotation(BaseModel):
     """标签标注结果
-    
+
     用于标记文本是否包含多步操作任务
     """
     multi_step: bool  # 是否多步任务

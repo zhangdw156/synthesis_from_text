@@ -1,12 +1,13 @@
 """工作流模型"""
 
-from pydantic import BaseModel, field_validator
 import re
+
+from pydantic import BaseModel, field_validator
 
 
 class Workflow(BaseModel):
     """工作流定义
-    
+
     包含任务描述、执行步骤、执行图、动作和工具定义
     """
     description: str

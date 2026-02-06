@@ -7,19 +7,17 @@ defaults:
 # 数据配置
 data:
   input_path: "data/ultrafineweb-en-part-0036-of-2048.parquet"
-  sample_size: 100          # 采样数量
-  random_seed: 42           # 随机种子
-  content_column: "content" # 文本列名
+  content_column: "content"   # 文本列名
+  data_id_column: null      # 原始数据标号列名，null 则用行号作为 data_id
+  max_rows: null            # 最多加载行数，null 表示不限制（用于测试可设小值）
 
-# 输出配置
+# 输出配置：只保存最终成功轨迹，不保存失败与中间结果
 output:
   output_dir: "outputs"
-  batch_size: 10            # 每处理多少条保存一次
-  save_trajectory_jsonl: true   # 保存最终轨迹
-  save_intermediate_jsonl: true # 保存中间步骤结果
+  target_success_count: 1000  # 目标成功条数，处理到达到为止
+  save_every_n_success: 50   # 每累计多少条成功写一次盘（轨迹逐条追加，此处为 checkpoint 写入频率）
 
 # 处理配置
 processing:
-  max_workers: 4            # 并行工作线程数
+  max_workers: 4             # 并行工作线程数
   request_timeout: 300      # 单个请求超时时间（秒）
-  continue_from: null       # 从上次中断处继续（checkpoint 文件路径）

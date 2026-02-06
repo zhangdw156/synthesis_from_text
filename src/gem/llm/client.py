@@ -1,18 +1,18 @@
 """LLM 客户端封装"""
 
-from openai import OpenAI
-from typing import Optional
 import logging
+
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
 
 class LLMClient:
     """LLM 客户端
-    
+
     封装 OpenAI API 调用，支持本地 VLLM 部署
     """
-    
+
     def __init__(
         self,
         base_url: str = "http://localhost:8000/v1",
@@ -27,13 +27,13 @@ class LLMClient:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.top_p = top_p
-    
-    def call(self, prompt: str) -> Optional[str]:
+
+    def call(self, prompt: str) -> str | None:
         """调用 LLM
-        
+
         Args:
             prompt: 输入提示词
-            
+
         Returns:
             成功: 模型生成的文本
             失败: None
@@ -46,15 +46,15 @@ class LLMClient:
                 max_tokens=self.max_tokens,
                 top_p=self.top_p,
             )
-            
+
             content = response.choices[0].message.content
-            
+
             # 处理 Qwen3 的特殊输出格式（去除 think 标签）
             if "</think>" in content:
                 content = content.rsplit("</think>", 1)[-1].lstrip()
-            
+
             return content
-            
+
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
             return None

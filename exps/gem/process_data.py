@@ -1,18 +1,18 @@
 """GEM 实验数据处理脚本
 
-并行处理数据，保存中间结果，生成可追溯的轨迹数据。
+按「目标成功条数」持续处理，只保存最终成功轨迹；
+断点记录：成功/失败/未处理的原始数据标号；
+每累计一定数量成功即写盘一次。
 """
 
 import json
 import logging
-import os
 import sys
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import hydra
 import pandas as pd
@@ -23,39 +23,72 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from gem import PipelineConfig, SynthesisPipeline
-from gem.models import Trajectory
 
 logger = logging.getLogger(__name__)
 
+CHECKPOINT_FILENAME = "checkpoint.json"
+TRAJECTORIES_FILENAME = "final_trajectories.jsonl"
 
-def setup_logging(log_level: str = "INFO"):
+
+def setup_logging(log_level: str = "INFO") -> None:
     """配置日志"""
     logging.basicConfig(
         level=getattr(logging, log_level.upper()),
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
-        ]
+        ],
     )
 
 
-def load_and_sample_data(cfg: DictConfig) -> pd.DataFrame:
-    """加载并采样数据"""
-    logger.info(f"Loading data from: {cfg.data.input_path}")
-    
-    # 读取 parquet
+def load_checkpoint(checkpoint_path: Path) -> tuple[set[str], set[str]]:
+    """加载断点：成功 id 集合、失败 id 集合"""
+    success_ids: set[str] = set()
+    failed_ids: set[str] = set()
+    if checkpoint_path.exists():
+        try:
+            with open(checkpoint_path, encoding="utf-8") as f:
+                data = json.load(f)
+            success_ids = set(data.get("success_ids", []))
+            failed_ids = set(data.get("failed_ids", []))
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Could not load checkpoint: %s", e)
+    return success_ids, failed_ids
+
+
+def save_checkpoint(
+    checkpoint_path: Path,
+    success_ids: set[str],
+    failed_ids: set[str],
+) -> None:
+    """保存断点"""
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(checkpoint_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "success_ids": sorted(success_ids),
+                "failed_ids": sorted(failed_ids),
+            },
+            f,
+            ensure_ascii=False,
+            indent=0,
+        )
+
+
+def load_data(cfg: DictConfig) -> pd.DataFrame:
+    """加载数据并分配稳定 data_id（用于断点续跑）"""
+    logger.info("Loading data from: %s", cfg.data.input_path)
     df = pd.read_parquet(cfg.data.input_path)
-    logger.info(f"Total records: {len(df)}")
-    
-    # 采样
-    sample_size = min(cfg.data.sample_size, len(df))
-    if sample_size < len(df):
-        df = df.sample(n=sample_size, random_state=cfg.data.random_seed)
-        logger.info(f"Sampled {sample_size} records")
-    
-    # 添加唯一ID
-    df['data_id'] = [str(uuid.uuid4())[:8] for _ in range(len(df))]
-    
+    if getattr(cfg.data, "max_rows", None) is not None:
+        df = df.head(int(cfg.data.max_rows))
+    logger.info("Total rows: %d", len(df))
+
+    id_col = getattr(cfg.data, "data_id_column", None)
+    if id_col and id_col in df.columns:
+        df = df.rename(columns={id_col: "data_id"})
+        df["data_id"] = df["data_id"].astype(str)
+    else:
+        df["data_id"] = df.index.astype(str)
     return df
 
 
@@ -63,239 +96,183 @@ def process_single_item(
     data_id: str,
     text: str,
     pipeline: SynthesisPipeline,
-    cfg: DictConfig
-) -> Dict[str, Any]:
-    """处理单条数据
-    
-    返回包含完整处理链路的结果字典
-    """
+) -> dict[str, Any]:
+    """处理单条数据，仅返回是否成功及成功时的最终轨迹（无中间结果）"""
     start_time = time.time()
-    result = {
+    result: dict[str, Any] = {
         "data_id": data_id,
-        "original_text": text,
-        "timestamp": datetime.now().isoformat(),
         "success": False,
-        "processing_time": 0,
-        "error_step": None,
-        "error_message": None,
-        # 中间结果
-        "intermediate": {
-            "tag_annotation": None,
-            "workflows": None,
-            "dialogue": None,
-            "trajectory_before_refine": None,
-        },
-        # 最终结果
         "final_trajectory": None,
-        "stats": {
-            "num_messages": 0,
-            "num_tools": 0,
-        }
     }
-    
     try:
-        # 执行流水线
-        trajectory = pipeline.run(text)
-        
-        if trajectory is None:
-            result["error_step"] = "pipeline"
-            result["error_message"] = "Pipeline returned None"
+        pipeline_result = pipeline.run(text)
+        if pipeline_result is None:
             return result
-        
-        # 记录成功
         result["success"] = True
-        result["final_trajectory"] = trajectory.model_dump()
-        result["stats"]["num_messages"] = len(trajectory.conversation)
-        result["stats"]["num_tools"] = len(trajectory.toolsets)
-        
+        result["final_trajectory"] = pipeline_result.final_trajectory.model_dump()
     except Exception as e:
-        result["error_step"] = "exception"
-        result["error_message"] = str(e)
-        logger.error(f"Error processing {data_id}: {e}")
-    
+        logger.error("Error processing %s: %s", data_id, e)
     result["processing_time"] = time.time() - start_time
     return result
 
 
-def save_jsonl(results: List[Dict], output_path: Path):
-    """保存结果为 JSONL 格式"""
+def append_success_record(output_path: Path, data_id: str, trajectory: dict) -> None:
+    """向 JSONL 追加一条成功记录（仅 data_id + trajectory）"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'a', encoding='utf-8') as f:
-        for result in results:
-            f.write(json.dumps(result, ensure_ascii=False) + '\n')
-
-
-def load_checkpoint(checkpoint_path: Path) -> set:
-    """加载已处理的 ID"""
-    processed_ids = set()
-    if checkpoint_path.exists():
-        with open(checkpoint_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    data = json.loads(line.strip())
-                    processed_ids.add(data['data_id'])
-                except:
-                    pass
-    return processed_ids
+    with open(output_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"data_id": data_id, "trajectory": trajectory}, ensure_ascii=False) + "\n")
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
-    """主函数"""
-    # 设置日志
-    setup_logging(cfg.logging.level if hasattr(cfg, 'logging') else "INFO")
-    
+    """主函数：只保存成功轨迹，断点记录成功/失败/未处理，按成功数定期保存"""
+    setup_logging(cfg.logging.level if hasattr(cfg, "logging") else "INFO")
+
     logger.info("=" * 60)
-    logger.info("GEM Data Processing Experiment")
+    logger.info("GEM Data Processing (target success count, checkpoint resume)")
     logger.info("=" * 60)
-    logger.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
-    
-    # 创建输出目录
+    logger.info("Config:\n%s", OmegaConf.to_yaml(cfg))
+
     output_dir = Path(cfg.output.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 输出文件路径
-    final_output = output_dir / "final_trajectories.jsonl"
-    failed_output = output_dir / "failed.jsonl"
-    checkpoint_path = output_dir / "checkpoint.jsonl"
-    
-    # 加载数据
-    df = load_and_sample_data(cfg)
-    
-    # 检查断点续传
-    processed_ids = load_checkpoint(checkpoint_path)
-    if processed_ids:
-        logger.info(f"Resuming from checkpoint: {len(processed_ids)} already processed")
-        df = df[~df['data_id'].isin(processed_ids)]
-        logger.info(f"Remaining: {len(df)} records")
-    
-    if len(df) == 0:
-        logger.info("All data already processed!")
+    checkpoint_path = output_dir / CHECKPOINT_FILENAME
+    final_output = output_dir / TRAJECTORIES_FILENAME
+
+    target_success = int(cfg.output.target_success_count)
+    save_every_n = int(cfg.output.save_every_n_success)
+
+    # 断点：已成功、已失败
+    success_ids, failed_ids = load_checkpoint(checkpoint_path)
+    current_success = len(success_ids)
+    logger.info("Checkpoint: %d success, %d failed (resume)", current_success, len(failed_ids))
+
+    if current_success >= target_success:
+        logger.info("Already reached target success count %d, exit.", target_success)
         return
-    
-    # 创建流水线配置
+
+    df = load_data(cfg)
+    content_col = cfg.data.content_column
+    if content_col not in df.columns:
+        raise ValueError(f"Content column {content_col!r} not in dataframe")
+
+    # 待处理：未在成功集也未在失败集
+    processed = success_ids | failed_ids
+    pending = df[~df["data_id"].isin(processed)].copy()
+    pending = list(zip(pending["data_id"].tolist(), pending[content_col].tolist()))
+    logger.info("Pending items: %d", len(pending))
+
+    if not pending:
+        logger.info("No pending items; target may already be reached or data exhausted.")
+        return
+
     pipeline_config = PipelineConfig(
         llm=dict(cfg.llm),
-        steps={
-            name: dict(step_cfg) 
-            for name, step_cfg in cfg.steps.items()
-        }
+        steps={name: dict(sc) for name, sc in cfg.steps.items()},
     )
-    
-    # 创建流水线（每个线程一个实例避免竞争）
-    # 实际上我们在每个任务中创建
-    
-    # 准备处理参数
-    items = list(zip(df['data_id'], df[cfg.data.content_column]))
-    
-    # 统计
-    stats = {
-        "total": len(items),
-        "success": 0,
-        "failed": 0,
-        "total_time": 0,
-    }
-    
-    # 批量收集结果
-    batch_results = []
-    batch_failed = []
-    
-    # 并行处理
     max_workers = cfg.processing.max_workers
-    logger.info(f"Processing with {max_workers} workers...")
-    
+
+    # 统计
+    new_success = 0
+    new_failed = 0
+    total_processed = 0
     start_time_total = time.time()
-    
+    next_checkpoint_at = save_every_n  # 再累计多少条成功时写 checkpoint
+
+    pbar = tqdm(total=target_success - current_success, desc="Success", unit="ok")
+    pending_idx = 0
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
-        future_to_id = {}
-        for data_id, text in items:
-            pipeline = SynthesisPipeline(pipeline_config)
-            future = executor.submit(
-                process_single_item,
-                data_id,
-                text,
-                pipeline,
-                cfg
-            )
-            future_to_id[future] = data_id
-        
-        # 使用 tqdm 显示进度
-        with tqdm(total=len(items), desc="Processing") as pbar:
-            for future in as_completed(future_to_id):
-                result = future.result()
-                data_id = result['data_id']
-                
-                # 更新统计
-                if result['success']:
-                    stats['success'] += 1
-                    batch_results.append(result)
+        futures: dict = {}
+        in_flight = 0
+
+        while current_success < target_success and (pending_idx < len(pending) or futures):
+            # 尽量保持 in_flight 满载
+            while in_flight < max_workers * 2 and pending_idx < len(pending) and current_success < target_success:
+                data_id, text = pending[pending_idx]
+                pending_idx += 1
+                pipeline = SynthesisPipeline(pipeline_config)
+                fut = executor.submit(process_single_item, data_id, text, pipeline)
+                futures[fut] = data_id
+                in_flight += 1
+
+            if not futures:
+                break
+
+            done_futures = []
+            for future in as_completed(futures):
+                data_id = futures[future]
+                try:
+                    res = future.result()
+                except Exception as e:
+                    logger.error("Task failed for %s: %s", data_id, e)
+                    res = {"data_id": data_id, "success": False, "final_trajectory": None}
+                total_processed += 1
+
+                if res["success"] and res.get("final_trajectory") is not None:
+                    current_success += 1
+                    new_success += 1
+                    success_ids.add(data_id)
+                    append_success_record(final_output, data_id, res["final_trajectory"])
+                    pbar.update(1)
+                    next_checkpoint_at -= 1
+                    if next_checkpoint_at <= 0:
+                        save_checkpoint(checkpoint_path, success_ids, failed_ids)
+                        next_checkpoint_at = save_every_n
                 else:
-                    stats['failed'] += 1
-                    batch_failed.append(result)
-                
-                stats['total_time'] += result['processing_time']
-                
-                # 更新进度条
-                pbar.update(1)
-                avg_time = stats['total_time'] / (stats['success'] + stats['failed'])
-                pbar.set_postfix({
-                    'success': stats['success'],
-                    'failed': stats['failed'],
-                    'avg_time': f"{avg_time:.1f}s"
-                })
-                
-                # 批量保存
-                batch_size = cfg.output.batch_size
-                if len(batch_results) >= batch_size:
-                    save_jsonl(batch_results, final_output)
-                    save_jsonl(batch_failed, failed_output)
-                    save_jsonl(batch_results + batch_failed, checkpoint_path)
-                    batch_results = []
-                    batch_failed = []
-    
-    # 保存剩余结果
-    if batch_results:
-        save_jsonl(batch_results, final_output)
-    if batch_failed:
-        save_jsonl(batch_failed, failed_output)
-    if batch_results or batch_failed:
-        save_jsonl(batch_results + batch_failed, checkpoint_path)
-    
-    # 最终统计
+                    new_failed += 1
+                    failed_ids.add(data_id)
+                    save_checkpoint(checkpoint_path, success_ids, failed_ids)
+
+                done_futures.append(future)
+                in_flight -= 1
+                pbar.set_postfix(
+                    success=current_success,
+                    failed=len(failed_ids),
+                    pending=len(pending) - pending_idx,
+                    ok=new_success,
+                )
+                break  # 处理一个完成后即跳出，以便再次检查是否已达标并提交新任务
+
+            for f in done_futures:
+                del futures[f]
+
+    pbar.close()
+    save_checkpoint(checkpoint_path, success_ids, failed_ids)
+
     total_time = time.time() - start_time_total
     logger.info("=" * 60)
-    logger.info("Processing Complete!")
-    logger.info("=" * 60)
-    logger.info(f"Total records: {stats['total']}")
-    logger.info(f"Success: {stats['success']}")
-    logger.info(f"Failed: {stats['failed']}")
-    logger.info(f"Success rate: {stats['success']/stats['total']*100:.1f}%")
-    logger.info(f"Total time: {total_time:.1f}s")
-    logger.info(f"Average time per item: {total_time/stats['total']:.1f}s")
-    logger.info(f"Output files:")
-    logger.info(f"  - Success: {final_output}")
-    logger.info(f"  - Failed: {failed_output}")
-    logger.info(f"  - Checkpoint: {checkpoint_path}")
-    
-    # 保存统计报告
+    logger.info("Done.")
+    logger.info("  Target success: %d", target_success)
+    logger.info("  Current success: %d", current_success)
+    logger.info("  New success this run: %d", new_success)
+    logger.info("  New failed this run: %d", new_failed)
+    logger.info("  Total processed this run: %d", total_processed)
+    logger.info("  Total time: %.1fs", total_time)
+    if total_processed:
+        logger.info("  Avg time per item: %.1fs", total_time / total_processed)
+    logger.info("Output:")
+    logger.info("  Trajectories: %s", final_output)
+    logger.info("  Checkpoint: %s", checkpoint_path)
+
     report = {
         "timestamp": datetime.now().isoformat(),
         "config": OmegaConf.to_container(cfg, resolve=True),
         "statistics": {
-            "total": stats['total'],
-            "success": stats['success'],
-            "failed": stats['failed'],
-            "success_rate": stats['success']/stats['total']*100,
-            "total_time": total_time,
-            "avg_time_per_item": total_time/stats['total'],
-        }
+            "target_success_count": target_success,
+            "current_success_count": current_success,
+            "new_success_this_run": new_success,
+            "new_failed_this_run": new_failed,
+            "total_processed_this_run": total_processed,
+            "total_success_ids": len(success_ids),
+            "total_failed_ids": len(failed_ids),
+            "total_time_seconds": total_time,
+            "avg_time_per_item": total_time / total_processed if total_processed else 0,
+        },
     }
-    
     report_path = output_dir / "report.json"
-    with open(report_path, 'w', encoding='utf-8') as f:
+    with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
-    logger.info(f"  - Report: {report_path}")
+    logger.info("  Report: %s", report_path)
 
 
 if __name__ == "__main__":

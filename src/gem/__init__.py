@@ -5,22 +5,23 @@
 
 __version__ = "0.1.0.dev"
 
-from gem.pipeline import SynthesisPipeline, PipelineConfig
 from gem.models import (
-    TagAnnotation,
-    Workflow,
     Dialogue,
-    Message,
-    ToolCall,
-    Trajectory,
-    ToolDefinition,
     EvaluationResult,
+    Message,
+    TagAnnotation,
+    ToolCall,
+    ToolDefinition,
+    Trajectory,
+    Workflow,
 )
+from gem.pipeline import PipelineConfig, PipelineResult, SynthesisPipeline
 
 __all__ = [
     "__version__",
     "SynthesisPipeline",
     "PipelineConfig",
+    "PipelineResult",
     "TagAnnotation",
     "Workflow",
     "Dialogue",

@@ -16,7 +16,7 @@ class EvaluationResult(BaseModel):
         if v not in (0, 1):
             raise ValueError("Score must be 0 or 1")
         return v
-    
+
     def is_valid(self) -> bool:
         """检查是否通过所有评估（无幻觉）"""
         return self.R1 == 1 and self.R2 == 1 and self.R3 == 1
