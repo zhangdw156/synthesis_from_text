@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
-T = TypeVar('T', bound=BaseModel)
+T = TypeVar("T", bound=BaseModel)
 
 
 class PipelineStep[T: BaseModel](ABC):

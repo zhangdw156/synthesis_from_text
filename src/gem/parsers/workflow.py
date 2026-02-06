@@ -23,7 +23,9 @@ class WorkflowParser:
         workflows = []
 
         # 匹配所有 workflow 块
-        workflow_pattern = re.compile(r'<workflow>(.*?)</workflow>', re.DOTALL | re.MULTILINE)
+        workflow_pattern = re.compile(
+            r"<workflow>(.*?)</workflow>", re.DOTALL | re.MULTILINE
+        )
         workflow_blocks = workflow_pattern.findall(response)
 
         for block in workflow_blocks:
@@ -51,14 +53,14 @@ class WorkflowParser:
                 steps=steps,
                 execution_graph=exec_graph,
                 actions=actions,
-                tools=tools
+                tools=tools,
             )
         except Exception:
             return None
 
     def _extract_tag(self, text: str, tag: str, default: str = "") -> str:
         """提取 XML 标签内容"""
-        pattern = re.compile(rf'<{tag}>(.*?)</{tag}>', re.DOTALL)
+        pattern = re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL)
         match = pattern.search(text)
         return match.group(1).strip() if match else default
 

@@ -26,7 +26,9 @@ class TrajectoryParser:
         """
         try:
             # 提取工具集
-            toolsets_match = re.search(r'<toolsets>(.*?)</toolsets>', response, re.DOTALL)
+            toolsets_match = re.search(
+                r"<toolsets>(.*?)</toolsets>", response, re.DOTALL
+            )
             toolsets_data = []
             if toolsets_match:
                 try:
@@ -35,11 +37,11 @@ class TrajectoryParser:
                     pass
 
             # 提取 system prompt
-            system_match = re.search(r'<system>(.*?)</system>', response, re.DOTALL)
+            system_match = re.search(r"<system>(.*?)</system>", response, re.DOTALL)
             system_prompt = system_match.group(1).strip() if system_match else ""
 
             # 提取对话历史
-            tags_pattern = re.compile(r'<(user|assistant|tool)>(.*?)</\1>', re.DOTALL)
+            tags_pattern = re.compile(r"<(user|assistant|tool)>(.*?)</\1>", re.DOTALL)
             all_turns = tags_pattern.findall(response)
 
             conversation = []
@@ -47,15 +49,15 @@ class TrajectoryParser:
                 content = content.strip()
                 tool_calls = None
 
-                if role == 'assistant':
+                if role == "assistant":
                     tool_calls = self._extract_tool_calls(content)
-                    content = re.sub(r'<func>.*?</func>', '', content, flags=re.DOTALL).strip()
+                    content = re.sub(
+                        r"<func>.*?</func>", "", content, flags=re.DOTALL
+                    ).strip()
 
-                conversation.append(Message(
-                    role=role,
-                    content=content,
-                    tool_calls=tool_calls
-                ))
+                conversation.append(
+                    Message(role=role, content=content, tool_calls=tool_calls)
+                )
 
             toolsets = []
             for t in toolsets_data:
@@ -68,7 +70,7 @@ class TrajectoryParser:
             return Trajectory(
                 toolsets=toolsets,
                 system_prompt=system_prompt,
-                conversation=conversation
+                conversation=conversation,
             )
 
         except Exception:
@@ -77,17 +79,19 @@ class TrajectoryParser:
     def _extract_tool_calls(self, content: str) -> list[ToolCall] | None:
         """提取工具调用"""
         tool_calls = []
-        func_pattern = re.compile(r'<func>(.*?)</func>', re.DOTALL)
+        func_pattern = re.compile(r"<func>(.*?)</func>", re.DOTALL)
         funcs = func_pattern.findall(content)
 
         for f_json in funcs:
             try:
-                clean_json = re.sub(r'[\x00-\x1F\x7F]', '', f_json.strip())
+                clean_json = re.sub(r"[\x00-\x1F\x7F]", "", f_json.strip())
                 f_data = json.loads(clean_json)
-                tool_calls.append(ToolCall(
-                    name=f_data.get("name", ""),
-                    arguments=f_data.get("arguments", {})
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        name=f_data.get("name", ""),
+                        arguments=f_data.get("arguments", {}),
+                    )
+                )
             except json.JSONDecodeError:
                 continue
 

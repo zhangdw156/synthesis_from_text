@@ -21,7 +21,7 @@ class WorkflowDiscoveryStep(PipelineStep[list[Workflow]]):
     def __init__(
         self,
         llm_client: LLMClient,
-        prompt_path: str = "src/gem/prompts/workflow_and_tool_discovery.md"
+        prompt_path: str = "src/gem/prompts/workflow_and_tool_discovery.md",
     ):
         self.llm = llm_client
         self.parser = WorkflowParser()
@@ -29,7 +29,7 @@ class WorkflowDiscoveryStep(PipelineStep[list[Workflow]]):
         prompt_file = Path(prompt_path)
         if not prompt_file.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-        self.prompt_template = prompt_file.read_text(encoding='utf-8')
+        self.prompt_template = prompt_file.read_text(encoding="utf-8")
 
     @property
     def step_name(self) -> str:
@@ -49,7 +49,7 @@ class WorkflowDiscoveryStep(PipelineStep[list[Workflow]]):
             # 获取原始文本（从 annotation 的上下文中）
             # 注意：这里需要一个方式传递原始文本
             # 修改设计：直接传入原始文本
-            if not hasattr(annotation, '_raw_text'):
+            if not hasattr(annotation, "_raw_text"):
                 logger.error("Workflow discovery: Missing raw text")
                 return None
 

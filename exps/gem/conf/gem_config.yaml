@@ -1,5 +1,6 @@
 # GEM 流水线配置
 
+# 默认 LLM 配置，所有步骤共用；各步骤可在 llm_steps 下覆盖
 llm:
   base_url: "http://localhost:8000/v1"
   model_name: "Qwen3-8B"
@@ -7,6 +8,20 @@ llm:
   temperature: 0.7
   max_tokens: 40960
   top_p: 0.95
+
+# 各阶段单独的大模型配置（可选），只写要覆盖的字段，未写则用上面 llm
+# 可覆盖: base_url, model_name, api_key, temperature, max_tokens, top_p
+llm_steps:
+  tag_annotation:
+    temperature: 0.2
+  workflow_discovery:
+    temperature: 0.3
+  trajectory_generation:
+    temperature: 0.5
+  trajectory_refinement:
+    temperature: 0.5
+  hallucination_detection:
+    temperature: 0.2
 
 steps:
   tag_annotation:

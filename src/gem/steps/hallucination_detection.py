@@ -20,7 +20,7 @@ class HallucinationDetectionStep(PipelineStep[Trajectory]):
     def __init__(
         self,
         llm_client: LLMClient,
-        prompt_path: str = "src/gem/prompts/hallucination_detection.md"
+        prompt_path: str = "src/gem/prompts/hallucination_detection.md",
     ):
         self.llm = llm_client
         self.parser = EvaluationParser()
@@ -28,7 +28,7 @@ class HallucinationDetectionStep(PipelineStep[Trajectory]):
         prompt_file = Path(prompt_path)
         if not prompt_file.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-        self.prompt_template = prompt_file.read_text(encoding='utf-8')
+        self.prompt_template = prompt_file.read_text(encoding="utf-8")
 
     @property
     def step_name(self) -> str:
@@ -47,8 +47,7 @@ class HallucinationDetectionStep(PipelineStep[Trajectory]):
         try:
             # 填充 prompt
             prompt = self.prompt_template.replace(
-                "{trajectory}",
-                trajectory.model_dump_json()
+                "{trajectory}", trajectory.model_dump_json()
             )
 
             # 调用 LLM

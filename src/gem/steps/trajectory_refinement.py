@@ -23,7 +23,7 @@ class TrajectoryRefinementStep(PipelineStep[Trajectory]):
     def __init__(
         self,
         llm_client: LLMClient,
-        prompt_path: str = "src/gem/prompts/trajectory_refinement.md"
+        prompt_path: str = "src/gem/prompts/trajectory_refinement.md",
     ):
         self.llm = llm_client
         self.parser = TrajectoryParser()
@@ -31,7 +31,7 @@ class TrajectoryRefinementStep(PipelineStep[Trajectory]):
         prompt_file = Path(prompt_path)
         if not prompt_file.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-        self.prompt_template = prompt_file.read_text(encoding='utf-8')
+        self.prompt_template = prompt_file.read_text(encoding="utf-8")
 
     @property
     def step_name(self) -> str:
@@ -55,10 +55,8 @@ class TrajectoryRefinementStep(PipelineStep[Trajectory]):
             dialogue_str = json.dumps(dialogue.model_dump(), ensure_ascii=False)
 
             # 填充 prompt
-            prompt = (
-                self.prompt_template
-                .replace("{tools}", tools_str)
-                .replace("{our_traj}", dialogue_str)
+            prompt = self.prompt_template.replace("{tools}", tools_str).replace(
+                "{our_traj}", dialogue_str
             )
 
             # 调用 LLM
@@ -73,7 +71,9 @@ class TrajectoryRefinementStep(PipelineStep[Trajectory]):
                 logger.warning("Trajectory refinement: Failed to parse response")
                 return None
 
-            logger.info(f"Trajectory refinement: Refined to {len(trajectory.conversation)} messages")
+            logger.info(
+                f"Trajectory refinement: Refined to {len(trajectory.conversation)} messages"
+            )
             return trajectory
 
         except Exception as e:

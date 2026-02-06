@@ -22,7 +22,7 @@ class TrajectoryGenerationStep(PipelineStep[Dialogue]):
     def __init__(
         self,
         llm_client: LLMClient,
-        prompt_path: str = "src/gem/prompts/trajectory_generation.md"
+        prompt_path: str = "src/gem/prompts/trajectory_generation.md",
     ):
         self.llm = llm_client
         self.parser = DialogueParser()
@@ -30,7 +30,7 @@ class TrajectoryGenerationStep(PipelineStep[Dialogue]):
         prompt_file = Path(prompt_path)
         if not prompt_file.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-        self.prompt_template = prompt_file.read_text(encoding='utf-8')
+        self.prompt_template = prompt_file.read_text(encoding="utf-8")
 
     @property
     def step_name(self) -> str:
@@ -53,25 +53,29 @@ class TrajectoryGenerationStep(PipelineStep[Dialogue]):
             tools_str = json.dumps(workflow.tools, ensure_ascii=False)
 
             # 填充 prompt
-            prompt = (
-                self.prompt_template
-                .replace("{candidate_tools}", tools_str)
-                .replace("{current_task}", workflow.steps)
-            )
+            prompt = self.prompt_template.replace(
+                "{candidate_tools}", tools_str
+            ).replace("{current_task}", workflow.steps)
 
             # 调用 LLM
             response = self.llm.call(prompt)
             if not response:
-                logger.warning(f"Trajectory generation [{index}]: LLM returned empty response")
+                logger.warning(
+                    f"Trajectory generation [{index}]: LLM returned empty response"
+                )
                 return None
 
             # 解析结果
             dialogue = self.parser.parse(response)
             if not dialogue:
-                logger.warning(f"Trajectory generation [{index}]: Failed to parse response")
+                logger.warning(
+                    f"Trajectory generation [{index}]: Failed to parse response"
+                )
                 return None
 
-            logger.info(f"Trajectory generation [{index}]: Generated {len(dialogue.conversation)} messages")
+            logger.info(
+                f"Trajectory generation [{index}]: Generated {len(dialogue.conversation)} messages"
+            )
             return dialogue
 
         except Exception as e:

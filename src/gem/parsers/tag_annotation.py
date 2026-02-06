@@ -20,21 +20,19 @@ class TagAnnotationParser:
         """
         try:
             # 匹配 multi_step
-            multi_step_match = re.search(r'<multi_step>(.*?)</multi_step>', response, re.DOTALL)
+            multi_step_match = re.search(
+                r"<multi_step>(.*?)</multi_step>", response, re.DOTALL
+            )
             if not multi_step_match:
                 return None
 
             multi_step_str = multi_step_match.group(1).strip()
-            multi_step = multi_step_str.lower() == 'true'
+            multi_step = multi_step_str.lower() == "true"
 
             # 如果非多步任务，直接返回（其他字段为空）
             if not multi_step:
                 return TagAnnotation(
-                    multi_step=False,
-                    summary="",
-                    domain="",
-                    platform="",
-                    task=""
+                    multi_step=False, summary="", domain="", platform="", task=""
                 )
 
             # 匹配其他字段
@@ -48,7 +46,7 @@ class TagAnnotationParser:
                 summary=summary,
                 domain=domain,
                 platform=platform,
-                task=task
+                task=task,
             )
 
         except Exception:
@@ -56,6 +54,6 @@ class TagAnnotationParser:
 
     def _extract_tag(self, text: str, tag: str, default: str = "") -> str:
         """提取 XML 标签内容"""
-        pattern = re.compile(rf'<{tag}>(.*?)</{tag}>', re.DOTALL)
+        pattern = re.compile(rf"<{tag}>(.*?)</{tag}>", re.DOTALL)
         match = pattern.search(text)
         return match.group(1).strip() if match else default

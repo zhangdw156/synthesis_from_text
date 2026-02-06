@@ -5,6 +5,7 @@
 
 __version__ = "0.1.0.dev"
 
+from gem.hydra_config import register_hydra_preset
 from gem.logging_config import setup_logging
 from gem.models import (
     Dialogue,
@@ -17,8 +18,6 @@ from gem.models import (
     Workflow,
 )
 from gem.pipeline import PipelineConfig, PipelineResult, SynthesisPipeline
-
-from gem.hydra_config import register_hydra_preset
 
 __all__ = [
     "__version__",

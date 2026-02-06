@@ -112,7 +112,12 @@ def append_success_record(output_path: Path, data_id: str, trajectory: dict) -> 
     """向 JSONL 追加一条成功记录（仅 data_id + trajectory）"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"data_id": data_id, "trajectory": trajectory}, ensure_ascii=False) + "\n")
+        f.write(
+            json.dumps(
+                {"data_id": data_id, "trajectory": trajectory}, ensure_ascii=False
+            )
+            + "\n"
+        )
 
 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
@@ -147,7 +152,9 @@ def main(cfg: DictConfig) -> None:
     # 断点：已成功、已失败
     success_ids, failed_ids = load_checkpoint(checkpoint_path)
     current_success = len(success_ids)
-    logger.info("Checkpoint: %d success, %d failed (resume)", current_success, len(failed_ids))
+    logger.info(
+        "Checkpoint: %d success, %d failed (resume)", current_success, len(failed_ids)
+    )
 
     if target_success is not None and current_success >= target_success:
         logger.info("Already reached target success count %d, exit.", target_success)
@@ -165,12 +172,18 @@ def main(cfg: DictConfig) -> None:
     logger.info("Pending items: %d", len(pending))
 
     if not pending:
-        logger.info("No pending items; target may already be reached or data exhausted.")
+        logger.info(
+            "No pending items; target may already be reached or data exhausted."
+        )
         return
 
+    llm_steps = None
+    if hasattr(cfg, "llm_steps") and getattr(cfg, "llm_steps", None):
+        llm_steps = {name: dict(sc) for name, sc in cfg.llm_steps.items()}
     pipeline_config = PipelineConfig(
         llm=dict(cfg.llm),
         steps={name: dict(sc) for name, sc in cfg.steps.items()},
+        llm_steps=llm_steps,
     )
     max_workers = cfg.processing.max_workers
 
@@ -194,7 +207,9 @@ def main(cfg: DictConfig) -> None:
         def should_continue() -> bool:
             if target_success is None:
                 return pending_idx < len(pending) or bool(futures)
-            return current_success < target_success and (pending_idx < len(pending) or bool(futures))
+            return current_success < target_success and (
+                pending_idx < len(pending) or bool(futures)
+            )
 
         def should_submit() -> bool:
             if target_success is None:
@@ -221,14 +236,20 @@ def main(cfg: DictConfig) -> None:
                     res = future.result()
                 except Exception as e:
                     logger.error("Task failed for %s: %s", data_id, e)
-                    res = {"data_id": data_id, "success": False, "final_trajectory": None}
+                    res = {
+                        "data_id": data_id,
+                        "success": False,
+                        "final_trajectory": None,
+                    }
                 total_processed += 1
 
                 if res["success"] and res.get("final_trajectory") is not None:
                     current_success += 1
                     new_success += 1
                     success_ids.add(data_id)
-                    append_success_record(final_output, data_id, res["final_trajectory"])
+                    append_success_record(
+                        final_output, data_id, res["final_trajectory"]
+                    )
                     if target_success is not None:
                         pbar.update(1)
                     next_checkpoint_at -= 1
@@ -261,7 +282,10 @@ def main(cfg: DictConfig) -> None:
     total_time = time.time() - start_time_total
     logger.info("=" * 60)
     logger.info("Done.")
-    logger.info("  Target success: %s", target_success if target_success is not None else "all (no limit)")
+    logger.info(
+        "  Target success: %s",
+        target_success if target_success is not None else "all (no limit)",
+    )
     logger.info("  Current success: %d", current_success)
     logger.info("  New success this run: %d", new_success)
     logger.info("  New failed this run: %d", new_failed)

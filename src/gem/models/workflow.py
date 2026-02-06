@@ -10,15 +10,16 @@ class Workflow(BaseModel):
 
     包含任务描述、执行步骤、执行图、动作和工具定义
     """
+
     description: str
     steps: str
     execution_graph: str
     actions: list[dict]
     tools: list[dict]
 
-    @field_validator('steps')
+    @field_validator("steps")
     @classmethod
     def fix_newlines(cls, v: str) -> str:
         """清理步骤中的换行符"""
-        v = v.replace('\\n', '\n')
-        return re.sub(r'\n\s*\n', '\n', v).strip()
+        v = v.replace("\\n", "\n")
+        return re.sub(r"\n\s*\n", "\n", v).strip()

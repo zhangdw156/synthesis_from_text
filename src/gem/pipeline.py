@@ -29,11 +29,50 @@ class PipelineResult:
     dialogue: Dialogue
 
 
+# 各步骤名称，用于合并 llm_steps
+STEP_NAMES = (
+    "tag_annotation",
+    "workflow_discovery",
+    "trajectory_generation",
+    "trajectory_refinement",
+    "hallucination_detection",
+)
+
+# LLMClient 支持的参数
+_LLM_KEYS = ("base_url", "model_name", "api_key", "temperature", "max_tokens", "top_p")
+
+
+def _llm_client_from_config(
+    llm_default: dict[str, Any], override: dict[str, Any] | None
+) -> LLMClient:
+    """用默认 llm 配置与步骤级 override 合并后构造 LLMClient。"""
+    merged = dict(llm_default)
+    if override:
+        for k in _LLM_KEYS:
+            if k in override:
+                merged[k] = override[k]
+    return LLMClient(
+        base_url=merged.get("base_url", "http://localhost:8000/v1"),
+        model_name=merged.get("model_name", "Qwen3-8B"),
+        api_key=merged.get("api_key", "dummy_key"),
+        temperature=merged.get("temperature", 0.7),
+        max_tokens=merged.get("max_tokens", 40960),
+        top_p=merged.get("top_p", 0.95),
+    )
+
+
 @dataclass
 class PipelineConfig:
-    """流水线配置（与 Hydra 配置结构对应）"""
+    """流水线配置（与 Hydra 配置结构对应）
+
+    llm: 默认 LLM 配置，所有步骤共用，可被 llm_steps 覆盖。
+    llm_steps: 可选，按步骤名覆盖 LLM 配置，例如 llm_steps.tag_annotation.temperature: 0.2。
+    steps: 各步骤的 prompt 等配置。
+    """
+
     llm: dict[str, Any]
     steps: dict[str, dict[str, Any]]
+    llm_steps: dict[str, dict[str, Any]] | None = None
 
 
 class SynthesisPipeline:
@@ -51,41 +90,33 @@ class SynthesisPipeline:
 
     def __init__(self, config: PipelineConfig):
         self.config = config
-
-        # 从配置创建 LLM 客户端
-        llm_cfg = config.llm
-        llm_client = LLMClient(
-            base_url=llm_cfg.get("base_url", "http://localhost:8000/v1"),
-            model_name=llm_cfg.get("model_name", "Qwen3-8B"),
-            api_key=llm_cfg.get("api_key", "dummy_key"),
-            temperature=llm_cfg.get("temperature", 0.7),
-            max_tokens=llm_cfg.get("max_tokens", 40960),
-            top_p=llm_cfg.get("top_p", 0.95),
-        )
-
-        # 从配置获取各步骤的 prompt 路径
+        llm_default = config.llm
+        llm_steps = config.llm_steps or {}
         steps_cfg = config.steps
 
-        # 初始化各步骤
+        # 为每个步骤创建独立的 LLM 客户端（默认配置 + 该步骤的 llm_steps 覆盖）
+        def client_for(step_name: str) -> LLMClient:
+            return _llm_client_from_config(llm_default, llm_steps.get(step_name))
+
         self.tag_annotation_step = TagAnnotationStep(
-            llm_client,
-            self._get_prompt_path(steps_cfg, "tag_annotation")
+            client_for("tag_annotation"),
+            self._get_prompt_path(steps_cfg, "tag_annotation"),
         )
         self.workflow_discovery_step = WorkflowDiscoveryStep(
-            llm_client,
-            self._get_prompt_path(steps_cfg, "workflow_discovery")
+            client_for("workflow_discovery"),
+            self._get_prompt_path(steps_cfg, "workflow_discovery"),
         )
         self.trajectory_generation_step = TrajectoryGenerationStep(
-            llm_client,
-            self._get_prompt_path(steps_cfg, "trajectory_generation")
+            client_for("trajectory_generation"),
+            self._get_prompt_path(steps_cfg, "trajectory_generation"),
         )
         self.trajectory_refinement_step = TrajectoryRefinementStep(
-            llm_client,
-            self._get_prompt_path(steps_cfg, "trajectory_refinement")
+            client_for("trajectory_refinement"),
+            self._get_prompt_path(steps_cfg, "trajectory_refinement"),
         )
         self.hallucination_detection_step = HallucinationDetectionStep(
-            llm_client,
-            self._get_prompt_path(steps_cfg, "hallucination_detection")
+            client_for("hallucination_detection"),
+            self._get_prompt_path(steps_cfg, "hallucination_detection"),
         )
 
     def _get_prompt_path(self, steps_cfg: dict, step_name: str) -> str:
@@ -121,7 +152,9 @@ class SynthesisPipeline:
             logger.info("Pipeline aborted at tag annotation step")
             return None
         if not annotation.multi_step:
-            logger.info("Pipeline aborted: <multi_step> is not True, skip remaining steps")
+            logger.info(
+                "Pipeline aborted: <multi_step> is not True, skip remaining steps"
+            )
             return None
 
         # Step 2: 工作流发现
@@ -138,31 +171,31 @@ class SynthesisPipeline:
 
         # 处理每个工作流
         for i, workflow in enumerate(workflows):
-            logger.info(f"Processing workflow {i+1}/{len(workflows)}")
+            logger.info(f"Processing workflow {i + 1}/{len(workflows)}")
 
             # Step 3: 轨迹生成
             logger.info("  Step 3: Trajectory generation")
             dialogue = self.trajectory_generation_step.execute((workflow, i))
             if dialogue is None:
-                logger.warning(f"  Workflow {i+1}: Failed at trajectory generation")
+                logger.warning(f"  Workflow {i + 1}: Failed at trajectory generation")
                 continue
 
             # Step 4: 轨迹优化
             logger.info("  Step 4: Trajectory refinement")
             trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
             if trajectory is None:
-                logger.warning(f"  Workflow {i+1}: Failed at trajectory refinement")
+                logger.warning(f"  Workflow {i + 1}: Failed at trajectory refinement")
                 continue
 
             # Step 5: 幻觉检测
             logger.info("  Step 5: Hallucination detection")
             final_trajectory = self.hallucination_detection_step.execute(trajectory)
             if final_trajectory is None:
-                logger.warning(f"  Workflow {i+1}: Failed hallucination check")
+                logger.warning(f"  Workflow {i + 1}: Failed hallucination check")
                 continue
 
             # 成功完成一个工作流，返回最终轨迹与全部中间结果
-            logger.info(f"  Workflow {i+1}: Successfully completed!")
+            logger.info(f"  Workflow {i + 1}: Successfully completed!")
             return PipelineResult(
                 final_trajectory=final_trajectory,
                 tag_annotation=annotation,
@@ -194,7 +227,9 @@ class SynthesisPipeline:
         if annotation is None:
             return results
         if not annotation.multi_step:
-            logger.info("Pipeline aborted: <multi_step> is not True, skip remaining steps")
+            logger.info(
+                "Pipeline aborted: <multi_step> is not True, skip remaining steps"
+            )
             return results
 
         # Step 2: 工作流发现
@@ -209,7 +244,7 @@ class SynthesisPipeline:
 
         # 处理每个工作流
         for i, workflow in enumerate(workflows):
-            logger.info(f"Processing workflow {i+1}/{len(workflows)}")
+            logger.info(f"Processing workflow {i + 1}/{len(workflows)}")
 
             # Step 3: 轨迹生成
             dialogue = self.trajectory_generation_step.execute((workflow, i))
@@ -233,7 +268,9 @@ class SynthesisPipeline:
                         dialogue=dialogue,
                     )
                 )
-                logger.info(f"  Workflow {i+1}: Successfully completed!")
+                logger.info(f"  Workflow {i + 1}: Successfully completed!")
 
-        logger.info(f"Pipeline completed: {len(results)}/{len(workflows)} workflows succeeded")
+        logger.info(
+            f"Pipeline completed: {len(results)}/{len(workflows)} workflows succeeded"
+        )
         return results

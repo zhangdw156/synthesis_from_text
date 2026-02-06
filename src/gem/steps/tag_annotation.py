@@ -20,7 +20,7 @@ class TagAnnotationStep(PipelineStep[TagAnnotation]):
     def __init__(
         self,
         llm_client: LLMClient,
-        prompt_path: str = "src/gem/prompts/tag_annotation.md"
+        prompt_path: str = "src/gem/prompts/tag_annotation.md",
     ):
         self.llm = llm_client
         self.parser = TagAnnotationParser()
@@ -29,7 +29,7 @@ class TagAnnotationStep(PipelineStep[TagAnnotation]):
         prompt_file = Path(prompt_path)
         if not prompt_file.exists():
             raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-        self.prompt_template = prompt_file.read_text(encoding='utf-8')
+        self.prompt_template = prompt_file.read_text(encoding="utf-8")
 
     @property
     def step_name(self) -> str:
