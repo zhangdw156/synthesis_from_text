@@ -19,26 +19,18 @@ import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
-# 添加项目根目录到路径
+# Add project root so gem is importable when running as script; when run with uv run, gem is the installed package.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from gem import PipelineConfig, SynthesisPipeline
+from gem import PipelineConfig, SynthesisPipeline, register_hydra_preset, setup_logging
+
+# Register Hydra preset so defaults: - hydra: gem_preset apply (no timestamped output dir).
+register_hydra_preset()
 
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILENAME = "checkpoint.json"
 TRAJECTORIES_FILENAME = "final_trajectories.jsonl"
-
-
-def setup_logging(log_level: str = "INFO") -> None:
-    """配置日志"""
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-        ],
-    )
 
 
 def load_checkpoint(checkpoint_path: Path) -> tuple[set[str], set[str]]:
@@ -126,7 +118,12 @@ def append_success_record(output_path: Path, data_id: str, trajectory: dict) -> 
 @hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     """主函数：只保存成功轨迹，断点记录成功/失败/未处理，按成功数定期保存"""
-    setup_logging(cfg.logging.level if hasattr(cfg, "logging") else "INFO")
+    log_cfg = getattr(cfg, "logging", None) or {}
+    setup_logging(
+        level=getattr(log_cfg, "level", "INFO"),
+        log_file=getattr(log_cfg, "file", None),
+        format=getattr(log_cfg, "format", None),
+    )
 
     logger.info("=" * 60)
     logger.info("GEM Data Processing (target success count, checkpoint resume)")

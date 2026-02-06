@@ -1,6 +1,8 @@
 # GEM 实验配置
+# Use gem Hydra preset (no timestamped output dir): register_hydra_preset() in script, then:
 
 defaults:
+  - hydra: gem_preset
   - gem_config
   - _self_
 

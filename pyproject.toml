@@ -24,6 +24,7 @@ path = "src/gem/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gem"]
+force-include = { "src/gem/configs" = "gem/configs" }
 
 [tool.hatch.build.targets.sdist]
 include = [
