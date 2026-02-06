@@ -35,8 +35,10 @@ def setup_logging(
     root = logging.getLogger()
     root.setLevel(log_level)
     # 移除 Hydra 等已加的控制台 StreamHandler，避免同一条日志打两遍（一遍 Hydra 格式、一遍 Rich）
-    # 只移除写 stderr/stdout 的 handler，保留 FileHandler（文件日志仍由 Hydra 写）
+    # 只移除写 stdout/stderr 的 handler；保留 FileHandler（Hydra job_logging 的 file handler 继承自 StreamHandler，不能按 StreamHandler 一刀切移除）
     for h in root.handlers[:]:
+        if isinstance(h, logging.FileHandler):
+            continue
         if isinstance(h, logging.StreamHandler) and not isinstance(h, RichHandler):
             root.removeHandler(h)
     handler = RichHandler(
