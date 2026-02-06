@@ -5,18 +5,18 @@
 ## 功能特点
 
 - **并行处理**：支持多线程并行处理数据
-- **断点续传**：支持从上次中断处继续处理
-- **完整追溯**：每条数据有唯一 ID，记录完整处理链路
-- **进度显示**：使用 tqdm 显示实时进度和处理时间
-- **结果保存**：JSONL 格式，便于后续处理
+- **断点续传**：支持从上次中断处继续处理（checkpoint 记录成功 id 与失败 id 及失败阶段）
+- **完整追溯**：每条数据有唯一 data_id，便于续跑与排查
+- **进度显示**：使用 tqdm 显示实时进度
+- **结果保存**：仅保存最终成功轨迹为 JSONL，按 `save_every_n_success` 定期写盘
 
 ## 目录结构
 
 ```
 exps/gem/
 ├── conf/
-│   ├── config.yaml          # 实验配置（数据、并行数等）
-│   └── gem_config.yaml      # GEM 流水线配置
+│   ├── config.yaml          # 实验主配置（数据、输出、并行、hydra.searchpath）
+│   └── gem_config.yaml      # GEM 流水线配置（llm、steps、logging）
 ├── process_data.py          # 主处理脚本
 └── README.md                # 本文件
 ```
@@ -25,15 +25,23 @@ exps/gem/
 
 ### 1. 基本使用
 
+建议在项目根目录运行（便于 .env、数据路径等）：
+
+```bash
+uv run python exps/gem/process_data.py
+```
+
+或在 exps/gem 下：
+
 ```bash
 cd exps/gem
 python process_data.py
 ```
 
-### 2. 修改采样数量
+### 2. 限制处理行数（测试用）
 
 ```bash
-python process_data.py data.sample_size=50
+python process_data.py data.max_rows=10
 ```
 
 ### 3. 修改并行线程数
@@ -42,118 +50,68 @@ python process_data.py data.sample_size=50
 python process_data.py processing.max_workers=8
 ```
 
-### 4. 指定其他数据文件
+### 4. 指定数据文件与输出目录
 
 ```bash
-python process_data.py data.input_path="../../data/other.parquet"
+python process_data.py data.input_path="data/other.parquet" output.output_dir="syn_data_other"
 ```
 
-### 5. 断点续传
+### 5. 目标成功条数
 
-如果处理中断，会自动从 checkpoint 继续：
+`target_success_count` 为 -1 或 null 表示处理完 parquet 全部数据；设为正整数则达到该成功条数后结束：
 
 ```bash
-python process_data.py  # 自动检测并续传
+python process_data.py output.target_success_count=100
+```
+
+### 6. 断点续传
+
+中断后再次运行即可从 checkpoint 续跑（会跳过已成功与已失败的 data_id）：
+
+```bash
+python process_data.py
 ```
 
 ## 配置说明
 
-### conf/config.yaml
+### conf/config.yaml（主配置）
 
-```yaml
-data:
-  input_path: "../../data/ultrafineweb-en-part-0036-of-2048.parquet"
-  sample_size: 100          # 采样数量
-  random_seed: 42           # 随机种子
+- **data**：`input_path`（parquet）、`content_column`（文本列）、`data_id_column`（可选）、`max_rows`（可选，限制行数）
+- **output**：`output_dir`、`target_success_count`（-1 表示不限制）、`save_every_n_success`（每累计多少条成功写一次盘）
+- **processing**：`max_workers`、`request_timeout`
+- **hydra.searchpath**：`pkg://gem.configs`，用于从 gem 包加载预设（如 `hydra: gem_preset`）
 
-output:
-  output_dir: "./outputs"
-  batch_size: 10            # 批量保存大小
-  save_trajectory_jsonl: true   # 保存最终轨迹
-  save_intermediate_jsonl: true # 保存中间结果
+### conf/gem_config.yaml（流水线配置）
 
-processing:
-  max_workers: 4            # 并行线程数
-  request_timeout: 300      # 请求超时时间
-```
+- **llm**：全局 LLM 配置（base_url、api_key 从环境变量或 .env 读取，见下）
+- **llm_steps**：各步骤可覆盖的 LLM 参数
+- **steps**：各阶段开关与 prompt 路径
+- **logging**：level、format、file
 
 ## 输出文件
 
-处理完成后在 `outputs/` 目录生成：
+在 `output.output_dir`（默认 `syn_data`）下：
 
-- **final_trajectories.jsonl** - 成功生成的轨迹数据
-- **failed.jsonl** - 处理失败的数据及原因
-- **checkpoint.jsonl** - 检查点（用于断点续传）
-- **report.json** - 统计报告
+- **checkpoint.json** — 断点：`success_ids`、`failed_stages`（data_id -> 失败阶段名）
+- **final_trajectories.jsonl** — 仅成功轨迹，每行一条：`{"data_id": "...", "trajectory": {...}}`
 
-### 成功数据格式
+不单独保存失败列表或中间结果；失败信息在 checkpoint 的 `failed_stages` 中。
 
-```json
-{
-  "data_id": "a1b2c3d4",
-  "original_text": "原始文本...",
-  "timestamp": "2024-01-01T12:00:00",
-  "success": true,
-  "processing_time": 5.2,
-  "final_trajectory": {
-    "toolsets": [...],
-    "system_prompt": "...",
-    "conversation": [...]
-  },
-  "stats": {
-    "num_messages": 10,
-    "num_tools": 5
-  }
-}
-```
+## 使用第三方/服务商模型
 
-### 失败数据格式
+`base_url`、`api_key` 等敏感信息**不要写在仓库内的配置文件**中，避免提交到 GitHub。推荐两种方式：
 
-```json
-{
-  "data_id": "e5f6g7h8",
-  "original_text": "原始文本...",
-  "success": false,
-  "error_step": "pipeline",
-  "error_message": "Pipeline returned None"
-}
-```
+1. **项目根目录 .env（推荐，本地开发）**
+   - 在项目根目录执行：`cp .env.example .env`
+   - 编辑 `.env`，填写 `GEM_LLM_BASE_URL`、`GEM_LLM_API_KEY`
+   - `.env` 已加入 `.gitignore`，不会提交。脚本会在 Hydra 解析配置前自动加载项目根目录的 `.env`
 
-## 统计报告
-
-`report.json` 包含：
-
-- 处理总数
-- 成功/失败数量
-- 成功率
-- 总耗时
-- 平均处理时间
+2. **环境变量（CI/容器/单次命令）**
+   - 使用 `GEM_LLM_BASE_URL`、`GEM_LLM_API_KEY`
+   - 示例：`GEM_LLM_BASE_URL="https://api.xxx.com/v1" GEM_LLM_API_KEY="sk-..." python exps/gem/process_data.py`
 
 ## 注意事项
 
-1. **VLLM 服务**：确保本地 VLLM 服务已启动（默认端口 8000）
-2. **内存使用**：并行处理会占用较多内存，根据机器配置调整 `max_workers`
-3. **数据路径**：默认从 `../../data/` 读取数据文件
-
-## 示例输出
-
-```
-============================================================
-GEM Data Processing Experiment
-============================================================
-Processing with 4 workers...
-Processing: 100%|████████████| 100/100 [05:23<00:00, success=45, failed=55, avg_time=3.2s]
-============================================================
-Processing Complete!
-============================================================
-Total records: 100
-Success: 45
-Failed: 55
-Success rate: 45.0%
-Total time: 323.4s
-Average time per item: 3.2s
-Output files:
-  - Success: outputs/final_trajectories.jsonl
-  - Failed: outputs/failed.jsonl
-  - Checkpoint: outputs/checkpoint.jsonl
-  - Report: outputs/report.json
+1. **LLM 服务**：本地 vLLM 默认 `http://localhost:8000/v1`；使用第三方时通过 .env 或环境变量配置。
+2. **内存与并发**：根据机器配置调整 `processing.max_workers`。
+3. **数据路径**：默认 `data/ultrafineweb-en-part-0036-of-2048.parquet`，相对项目根或当前工作目录，可按需覆盖。

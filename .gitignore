@@ -5,3 +5,7 @@ swanlog/
 __pycache__/
 outputs/
 syn_data/
+.env
+dist/
+logs/
+process_data.log

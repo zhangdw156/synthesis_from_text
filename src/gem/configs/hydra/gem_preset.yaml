@@ -1,0 +1,14 @@
+# Hydra preset: 不建时间戳输出目录、不建 .hydra/、不 chdir，并关闭 Hydra 的 job 日志
+# 实验主配置中 hydra.searchpath: [pkg://gem.configs]，defaults 里写 - hydra: gem_preset 即可
+
+run:
+  dir: .
+output_subdir: null
+job:
+  chdir: false
+# 关闭 Hydra 自带的 job 日志（避免在运行目录多一个 process_data.log），日志由 gem.setup_logging + cfg.logging 控制
+job_logging:
+  version: 1
+  root:
+    level: ERROR
+  disable_existing_loggers: true

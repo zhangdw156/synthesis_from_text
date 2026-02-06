@@ -1,6 +1,0 @@
-# Default logging config for experiments.
-# Merge into your app config or use via defaults (if you add a group for it).
-
-level: INFO
-format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-file: null

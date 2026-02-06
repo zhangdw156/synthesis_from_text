@@ -1,10 +1,11 @@
 # GEM 流水线配置
 
 # 默认 LLM 配置，所有步骤共用；各步骤可在 llm_steps 下覆盖
+# base_url / api_key 从环境变量读取，未设置时用默认值；本地可在项目根目录放 .env（见 .env.example）
 llm:
-  base_url: "http://localhost:8000/v1"
+  base_url: ${oc.env:GEM_LLM_BASE_URL,http://localhost:8000/v1}
   model_name: "Qwen3-8B"
-  api_key: "dummy_key"
+  api_key: ${oc.env:GEM_LLM_API_KEY,dummy_key}
   temperature: 0.7
   max_tokens: 40960
   top_p: 0.95

@@ -9,6 +9,7 @@ import json
 import logging
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -16,16 +17,22 @@ from typing import Any
 
 import hydra
 import pandas as pd
+from dotenv import load_dotenv
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 # Add project root so gem is importable when running as script; when run with uv run, gem is the installed package.
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(_PROJECT_ROOT))
+# 在 Hydra 解析配置前加载项目根目录 .env，使 ${oc.env:GEM_LLM_*} 能读到
+load_dotenv(_PROJECT_ROOT / ".env")
 
-from gem import PipelineConfig, SynthesisPipeline, register_hydra_preset, setup_logging
-
-# Register Hydra preset so defaults: - hydra: gem_preset apply (no timestamped output dir).
-register_hydra_preset()
+from gem import (  # noqa: E402 — 必须在 sys.path 与 load_dotenv 之后导入
+    PipelineConfig,
+    PipelineFailure,
+    SynthesisPipeline,
+    setup_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,33 +40,38 @@ CHECKPOINT_FILENAME = "checkpoint.json"
 TRAJECTORIES_FILENAME = "final_trajectories.jsonl"
 
 
-def load_checkpoint(checkpoint_path: Path) -> tuple[set[str], set[str]]:
-    """加载断点：成功 id 集合、失败 id 集合"""
+def load_checkpoint(
+    checkpoint_path: Path,
+) -> tuple[set[str], dict[str, str]]:
+    """加载断点：成功 id 集合、失败 id -> 阶段名 映射（兼容旧版仅有 failed_ids 的 checkpoint）"""
     success_ids: set[str] = set()
-    failed_ids: set[str] = set()
+    failed_stages: dict[str, str] = {}
     if checkpoint_path.exists():
         try:
             with open(checkpoint_path, encoding="utf-8") as f:
                 data = json.load(f)
             success_ids = set(data.get("success_ids", []))
-            failed_ids = set(data.get("failed_ids", []))
+            failed_stages = dict(data.get("failed_stages", {}))
+            # 兼容旧版：仅有 failed_ids 时视为 failed_stages[id] = "unknown"
+            if not failed_stages and data.get("failed_ids"):
+                failed_stages = {k: "unknown" for k in data["failed_ids"]}
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Could not load checkpoint: %s", e)
-    return success_ids, failed_ids
+    return success_ids, failed_stages
 
 
 def save_checkpoint(
     checkpoint_path: Path,
     success_ids: set[str],
-    failed_ids: set[str],
+    failed_stages: dict[str, str],
 ) -> None:
-    """保存断点"""
+    """保存断点（success_ids + failed_stages，失败集合由 failed_stages 的 key 表示）"""
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     with open(checkpoint_path, "w", encoding="utf-8") as f:
         json.dump(
             {
                 "success_ids": sorted(success_ids),
-                "failed_ids": sorted(failed_ids),
+                "failed_stages": dict(sorted(failed_stages.items())),
             },
             f,
             ensure_ascii=False,
@@ -89,21 +101,25 @@ def process_single_item(
     text: str,
     pipeline: SynthesisPipeline,
 ) -> dict[str, Any]:
-    """处理单条数据，仅返回是否成功及成功时的最终轨迹（无中间结果）"""
+    """处理单条数据，返回是否成功、成功时的最终轨迹、或失败时的 failure_stage"""
     start_time = time.time()
     result: dict[str, Any] = {
         "data_id": data_id,
         "success": False,
         "final_trajectory": None,
+        "failure_stage": None,
     }
     try:
-        pipeline_result = pipeline.run(text)
-        if pipeline_result is None:
+        out = pipeline.run(text)
+        if isinstance(out, PipelineFailure):
+            result["failure_stage"] = out.stage
+            result["processing_time"] = time.time() - start_time
             return result
         result["success"] = True
-        result["final_trajectory"] = pipeline_result.final_trajectory.model_dump()
+        result["final_trajectory"] = out.final_trajectory.model_dump()
     except Exception as e:
         logger.error("Error processing %s: %s", data_id, e)
+        result["failure_stage"] = "unknown"
     result["processing_time"] = time.time() - start_time
     return result
 
@@ -149,11 +165,13 @@ def main(cfg: DictConfig) -> None:
 
     save_every_n = int(cfg.output.save_every_n_success)
 
-    # 断点：已成功、已失败
-    success_ids, failed_ids = load_checkpoint(checkpoint_path)
+    # 断点：已成功、失败及失败阶段（failed_stages）
+    success_ids, failed_stages = load_checkpoint(checkpoint_path)
     current_success = len(success_ids)
     logger.info(
-        "Checkpoint: %d success, %d failed (resume)", current_success, len(failed_ids)
+        "Checkpoint: %d success, %d failed (resume)",
+        current_success,
+        len(failed_stages),
     )
 
     if target_success is not None and current_success >= target_success:
@@ -165,8 +183,8 @@ def main(cfg: DictConfig) -> None:
     if content_col not in df.columns:
         raise ValueError(f"Content column {content_col!r} not in dataframe")
 
-    # 待处理：未在成功集也未在失败集
-    processed = success_ids | failed_ids
+    # 待处理：未在成功集也未在失败集（失败集合 = failed_stages 的 key）
+    processed = success_ids | set(failed_stages.keys())
     pending = df[~df["data_id"].isin(processed)].copy()
     pending = list(zip(pending["data_id"].tolist(), pending[content_col].tolist()))
     logger.info("Pending items: %d", len(pending))
@@ -240,6 +258,7 @@ def main(cfg: DictConfig) -> None:
                         "data_id": data_id,
                         "success": False,
                         "final_trajectory": None,
+                        "failure_stage": "unknown",
                     }
                 total_processed += 1
 
@@ -254,12 +273,12 @@ def main(cfg: DictConfig) -> None:
                         pbar.update(1)
                     next_checkpoint_at -= 1
                     if next_checkpoint_at <= 0:
-                        save_checkpoint(checkpoint_path, success_ids, failed_ids)
+                        save_checkpoint(checkpoint_path, success_ids, failed_stages)
                         next_checkpoint_at = save_every_n
                 else:
                     new_failed += 1
-                    failed_ids.add(data_id)
-                    save_checkpoint(checkpoint_path, success_ids, failed_ids)
+                    failed_stages[data_id] = res.get("failure_stage") or "unknown"
+                    save_checkpoint(checkpoint_path, success_ids, failed_stages)
                 if target_success is None:
                     pbar.update(1)
 
@@ -267,7 +286,7 @@ def main(cfg: DictConfig) -> None:
                 in_flight -= 1
                 pbar.set_postfix(
                     success=current_success,
-                    failed=len(failed_ids),
+                    failed=len(failed_stages),
                     pending=len(pending) - pending_idx,
                     ok=new_success,
                 )
@@ -277,7 +296,7 @@ def main(cfg: DictConfig) -> None:
                 del futures[f]
 
     pbar.close()
-    save_checkpoint(checkpoint_path, success_ids, failed_ids)
+    save_checkpoint(checkpoint_path, success_ids, failed_stages)
 
     total_time = time.time() - start_time_total
     logger.info("=" * 60)
@@ -297,6 +316,9 @@ def main(cfg: DictConfig) -> None:
     logger.info("  Trajectories: %s", final_output)
     logger.info("  Checkpoint: %s", checkpoint_path)
 
+    # 按阶段统计失败数，便于分析瓶颈
+    stage_counts = dict(Counter(failed_stages.values()))
+
     report = {
         "timestamp": datetime.now().isoformat(),
         "config": OmegaConf.to_container(cfg, resolve=True),
@@ -308,7 +330,8 @@ def main(cfg: DictConfig) -> None:
             "new_failed_this_run": new_failed,
             "total_processed_this_run": total_processed,
             "total_success_ids": len(success_ids),
-            "total_failed_ids": len(failed_ids),
+            "total_failed_ids": len(failed_stages),
+            "failed_stages_summary": stage_counts,
             "total_time_seconds": total_time,
             "avg_time_per_item": total_time / total_processed if total_processed else 0,
         },

@@ -1,9 +1,0 @@
-# Hydra preset: no timestamped output dir, no .hydra/, no chdir.
-# Use in experiment config: defaults: - hydra: gem_preset
-# Register in code before @hydra.main: gem.register_hydra_preset()
-
-run:
-  dir: .
-output_subdir: null
-job:
-  chdir: false

@@ -1,10 +1,15 @@
 # GEM 实验配置
-# Use gem Hydra preset (no timestamped output dir): register_hydra_preset() in script, then:
+# 复用 gem 包内配置：hydra.searchpath 指向 pkg://gem.configs，defaults 中使用 hydra: gem_preset、logging: default
 
 defaults:
+  - logging: default
   - hydra: gem_preset
   - gem_config
   - _self_
+
+hydra:
+  searchpath:
+    - pkg://gem.configs
 
 # 数据配置
 data:

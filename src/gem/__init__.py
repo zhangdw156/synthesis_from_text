@@ -5,8 +5,6 @@
 
 __version__ = "0.1.0.dev"
 
-from gem.hydra_config import register_hydra_preset
-from gem.logging_config import setup_logging
 from gem.models import (
     Dialogue,
     EvaluationResult,
@@ -17,15 +15,23 @@ from gem.models import (
     Trajectory,
     Workflow,
 )
-from gem.pipeline import PipelineConfig, PipelineResult, SynthesisPipeline
+from gem.pipeline import (
+    PipelineConfig,
+    PipelineFailure,
+    PipelineResult,
+    SynthesisPipeline,
+)
+from gem.utils import CheckpointAnalyzer, TrajectoryToQwenMessages, setup_logging
 
 __all__ = [
     "__version__",
     "SynthesisPipeline",
     "PipelineConfig",
     "PipelineResult",
+    "PipelineFailure",
     "setup_logging",
-    "register_hydra_preset",
+    "CheckpointAnalyzer",
+    "TrajectoryToQwenMessages",
     "TagAnnotation",
     "Workflow",
     "Dialogue",

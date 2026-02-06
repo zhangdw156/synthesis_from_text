@@ -1,10 +1,10 @@
-"""Unified logging configuration for GEM and experiments.
+"""统一日志配置，供 GEM 与实验使用。
 
-Use from experiments::
+在实验中使用::
 
     from gem import setup_logging
     setup_logging(level="INFO", log_file=None)
-    # or from Hydra config:
+    # 或从 Hydra 配置:
     setup_logging(**cfg.logging)
 """
 
@@ -21,13 +21,13 @@ def setup_logging(
     format: str | None = None,
     **kwargs: Any,
 ) -> None:
-    """Configure root logging for the process.
+    """配置进程的 root logging。
 
     Args:
-        level: Log level (DEBUG, INFO, WARNING, ERROR).
-        log_file: If set, also write logs to this file (UTF-8). Directory is created if needed.
-        format: Log message format string; None uses DEFAULT_FORMAT.
-        **kwargs: Ignored; allows passing full Hydra cfg.logging without error.
+        level: 日志级别（DEBUG, INFO, WARNING, ERROR）。
+        log_file: 若设置，同时写入该文件（UTF-8），目录不存在会创建。
+        format: 日志格式串；None 使用 DEFAULT_FORMAT。
+        **kwargs: 忽略；便于直接传入 Hydra cfg.logging。
     """
     fmt = format if format else DEFAULT_FORMAT
     handlers: list[logging.Handler] = [logging.StreamHandler()]

@@ -29,6 +29,13 @@ class PipelineResult:
     dialogue: Dialogue
 
 
+@dataclass
+class PipelineFailure:
+    """流水线失败结果，记录失败阶段（用于 checkpoint failed_stages）"""
+
+    stage: str  # tag_annotation | workflow_discovery | trajectory_generation | trajectory_refinement | hallucination_detection
+
+
 # 各步骤名称，用于合并 llm_steps
 STEP_NAMES = (
     "tag_annotation",
@@ -85,7 +92,7 @@ class SynthesisPipeline:
     4. 轨迹优化
     5. 幻觉检测
 
-    任一步骤失败都返回 None
+    成功返回 PipelineResult，失败返回 PipelineFailure（含 stage）。
     """
 
     def __init__(self, config: PipelineConfig):
@@ -131,7 +138,7 @@ class SynthesisPipeline:
         step_cfg = steps_cfg.get(step_name, {})
         return step_cfg.get("prompt_path", default_paths.get(step_name, ""))
 
-    def run(self, raw_text: str) -> PipelineResult | None:
+    def run(self, raw_text: str) -> PipelineResult | PipelineFailure:
         """执行完整流水线
 
         Args:
@@ -139,7 +146,7 @@ class SynthesisPipeline:
 
         Returns:
             成功: PipelineResult（含 final_trajectory 与全部中间结果）
-            失败: None（任一步骤出错或 Step1 判定为 False）
+            失败: PipelineFailure（含 stage，用于 checkpoint failed_stages）
         """
         logger.info("=" * 60)
         logger.info("Starting synthesis pipeline")
@@ -150,26 +157,27 @@ class SynthesisPipeline:
         annotation = self.tag_annotation_step.execute(raw_text)
         if annotation is None:
             logger.info("Pipeline aborted at tag annotation step")
-            return None
+            return PipelineFailure(stage="tag_annotation")
         if not annotation.multi_step:
             logger.info(
                 "Pipeline aborted: <multi_step> is not True, skip remaining steps"
             )
-            return None
+            return PipelineFailure(stage="tag_annotation")
 
         # Step 2: 工作流发现
         logger.info("Step 2: Workflow discovery")
         workflows = self.workflow_discovery_step.execute_with_text(raw_text)
         if not workflows:
             logger.info("Pipeline aborted at workflow discovery step")
-            return None
+            return PipelineFailure(stage="workflow_discovery")
         # 仅保留 actions 与 tools 均非空的工作流，否则不执行后续步骤
         workflows = [w for w in workflows if w.actions and w.tools]
         if not workflows:
             logger.info("Pipeline aborted: all workflows have empty actions or tools")
-            return None
+            return PipelineFailure(stage="workflow_discovery")
 
-        # 处理每个工作流
+        # 处理每个工作流，记录最远失败阶段
+        last_failure_stage = "trajectory_generation"
         for i, workflow in enumerate(workflows):
             logger.info(f"Processing workflow {i + 1}/{len(workflows)}")
 
@@ -178,6 +186,7 @@ class SynthesisPipeline:
             dialogue = self.trajectory_generation_step.execute((workflow, i))
             if dialogue is None:
                 logger.warning(f"  Workflow {i + 1}: Failed at trajectory generation")
+                last_failure_stage = "trajectory_generation"
                 continue
 
             # Step 4: 轨迹优化
@@ -185,6 +194,7 @@ class SynthesisPipeline:
             trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
             if trajectory is None:
                 logger.warning(f"  Workflow {i + 1}: Failed at trajectory refinement")
+                last_failure_stage = "trajectory_refinement"
                 continue
 
             # Step 5: 幻觉检测
@@ -192,6 +202,7 @@ class SynthesisPipeline:
             final_trajectory = self.hallucination_detection_step.execute(trajectory)
             if final_trajectory is None:
                 logger.warning(f"  Workflow {i + 1}: Failed hallucination check")
+                last_failure_stage = "hallucination_detection"
                 continue
 
             # 成功完成一个工作流，返回最终轨迹与全部中间结果
@@ -205,7 +216,7 @@ class SynthesisPipeline:
             )
 
         logger.info("All workflows failed, pipeline returned None")
-        return None
+        return PipelineFailure(stage=last_failure_stage)
 
     def run_all_workflows(self, raw_text: str) -> list[PipelineResult]:
         """执行完整流水线，返回所有成功的工作流结果（含中间结果）
