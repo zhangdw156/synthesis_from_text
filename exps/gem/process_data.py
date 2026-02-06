@@ -135,7 +135,13 @@ def main(cfg: DictConfig) -> None:
     checkpoint_path = output_dir / CHECKPOINT_FILENAME
     final_output = output_dir / TRAJECTORIES_FILENAME
 
-    target_success = int(cfg.output.target_success_count)
+    # target_success_count missing or < 0: process all data in parquet; otherwise stop when count reached
+    raw = getattr(cfg.output, "target_success_count", None)
+    if raw is None or (isinstance(raw, (int, float)) and int(raw) < 0):
+        target_success = None  # no limit: process until parquet exhausted
+    else:
+        target_success = int(raw)
+
     save_every_n = int(cfg.output.save_every_n_success)
 
     # 断点：已成功、已失败
@@ -143,7 +149,7 @@ def main(cfg: DictConfig) -> None:
     current_success = len(success_ids)
     logger.info("Checkpoint: %d success, %d failed (resume)", current_success, len(failed_ids))
 
-    if current_success >= target_success:
+    if target_success is not None and current_success >= target_success:
         logger.info("Already reached target success count %d, exit.", target_success)
         return
 
@@ -175,16 +181,29 @@ def main(cfg: DictConfig) -> None:
     start_time_total = time.time()
     next_checkpoint_at = save_every_n  # 再累计多少条成功时写 checkpoint
 
-    pbar = tqdm(total=target_success - current_success, desc="Success", unit="ok")
+    if target_success is not None:
+        pbar = tqdm(total=target_success - current_success, desc="Success", unit="ok")
+    else:
+        pbar = tqdm(total=len(pending), desc="Processed", unit="item")
     pending_idx = 0
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures: dict = {}
         in_flight = 0
 
-        while current_success < target_success and (pending_idx < len(pending) or futures):
+        def should_continue() -> bool:
+            if target_success is None:
+                return pending_idx < len(pending) or bool(futures)
+            return current_success < target_success and (pending_idx < len(pending) or bool(futures))
+
+        def should_submit() -> bool:
+            if target_success is None:
+                return pending_idx < len(pending)
+            return pending_idx < len(pending) and current_success < target_success
+
+        while should_continue():
             # 尽量保持 in_flight 满载
-            while in_flight < max_workers * 2 and pending_idx < len(pending) and current_success < target_success:
+            while in_flight < max_workers * 2 and should_submit():
                 data_id, text = pending[pending_idx]
                 pending_idx += 1
                 pipeline = SynthesisPipeline(pipeline_config)
@@ -210,7 +229,8 @@ def main(cfg: DictConfig) -> None:
                     new_success += 1
                     success_ids.add(data_id)
                     append_success_record(final_output, data_id, res["final_trajectory"])
-                    pbar.update(1)
+                    if target_success is not None:
+                        pbar.update(1)
                     next_checkpoint_at -= 1
                     if next_checkpoint_at <= 0:
                         save_checkpoint(checkpoint_path, success_ids, failed_ids)
@@ -219,6 +239,8 @@ def main(cfg: DictConfig) -> None:
                     new_failed += 1
                     failed_ids.add(data_id)
                     save_checkpoint(checkpoint_path, success_ids, failed_ids)
+                if target_success is None:
+                    pbar.update(1)
 
                 done_futures.append(future)
                 in_flight -= 1
@@ -239,7 +261,7 @@ def main(cfg: DictConfig) -> None:
     total_time = time.time() - start_time_total
     logger.info("=" * 60)
     logger.info("Done.")
-    logger.info("  Target success: %d", target_success)
+    logger.info("  Target success: %s", target_success if target_success is not None else "all (no limit)")
     logger.info("  Current success: %d", current_success)
     logger.info("  New success this run: %d", new_success)
     logger.info("  New failed this run: %d", new_failed)
@@ -256,6 +278,7 @@ def main(cfg: DictConfig) -> None:
         "config": OmegaConf.to_container(cfg, resolve=True),
         "statistics": {
             "target_success_count": target_success,
+            "process_all_data": target_success is None,
             "current_success_count": current_success,
             "new_success_this_run": new_success,
             "new_failed_this_run": new_failed,

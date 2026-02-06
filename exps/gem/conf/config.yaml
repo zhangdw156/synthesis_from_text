@@ -16,7 +16,7 @@ data:
 # 输出配置：只保存最终成功轨迹，不保存失败与中间结果
 output:
   output_dir: "outputs"
-  target_success_count: 1000  # 目标成功条数，处理到达到为止
+  target_success_count: 1000  # 目标成功条数，达到后结束；null 或 <0 表示处理完 parquet 全部数据再结束
   save_every_n_success: 50   # 每累计多少条成功写一次盘（轨迹逐条追加，此处为 checkpoint 写入频率）
 
 # 处理配置
