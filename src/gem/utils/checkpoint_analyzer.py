@@ -19,7 +19,7 @@ from typing import Any
 class CheckpointAnalyzer:
     """分析 GEM 实验的 checkpoint.json 结果。
 
-    支持格式：success_ids、failed_stages；兼容旧版仅有 failed_ids 的 checkpoint。
+    支持格式：success_ids、failed_info；兼容旧版仅有 failed_ids 的 checkpoint。
     """
 
     def __init__(
@@ -43,11 +43,9 @@ class CheckpointAnalyzer:
             data = {}
         self._data = data
         success_ids = data.get("success_ids", [])
-        failed_stages = dict(data.get("failed_stages", {}))
-        if not failed_stages and data.get("failed_ids"):
-            failed_stages = {k: "unknown" for k in data["failed_ids"]}
+        failed_info = dict(data.get("failed_info", {}))
         self._success_ids: set[str] = set(success_ids)
-        self._failed_stages: dict[str, str] = failed_stages
+        self._failed_info: dict[str, str] = failed_info
 
     @property
     def success_ids(self) -> set[str]:
@@ -55,9 +53,9 @@ class CheckpointAnalyzer:
         return self._success_ids
 
     @property
-    def failed_stages(self) -> dict[str, str]:
+    def failed_info(self) -> dict[str, str]:
         """失败 data_id -> 失败阶段名。"""
-        return self._failed_stages
+        return self._failed_info
 
     @property
     def total_success(self) -> int:
@@ -67,16 +65,32 @@ class CheckpointAnalyzer:
     @property
     def total_failed(self) -> int:
         """失败条数。"""
-        return len(self._failed_stages)
+        return len(self._failed_info)
 
     @property
     def total_processed(self) -> int:
         """已处理条数（成功 + 失败）。"""
         return self.total_success + self.total_failed
 
+    from collections import Counter
+
     def failed_by_stage(self) -> dict[str, int]:
         """按阶段统计失败数：{ 阶段名: 失败数 }，按失败数降序。"""
-        counts = dict(Counter(self._failed_stages.values()))
+        # 定义你要提取的目标 key（替换成你实际需要的 key 名称，比如 'stage'）
+        target_key = "stage"
+
+        # 1. 遍历所有失败信息的 value（每个 value 是 dict），提取目标 key 对应的 value
+        # 2. 使用 get 方法避免 KeyError，若没有目标 key 则跳过（也可设默认值如 '未知阶段'）
+        stage_values = [
+            failed_dict.get(target_key)
+            for failed_dict in self._failed_info.values()
+            if failed_dict.get(target_key) is not None  # 过滤掉无目标 key 的情况
+        ]
+
+        # 统计各阶段的失败数
+        counts = dict(Counter(stage_values))
+
+        # 按失败数降序排列并转回字典
         return dict(sorted(counts.items(), key=lambda x: -x[1]))
 
     def summary(self) -> dict[str, Any]:

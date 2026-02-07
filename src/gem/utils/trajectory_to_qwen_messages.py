@@ -228,7 +228,7 @@ def _main() -> None:
             try:
                 max_samples = int(argv[i + 1])
             except ValueError:
-                print(f"无效 --max-samples: {argv[i+1]}", file=sys.stderr)
+                print(f"无效 --max-samples: {argv[i + 1]}", file=sys.stderr)
                 sys.exit(1)
             i += 2
             continue
@@ -242,7 +242,9 @@ def _main() -> None:
         sys.exit(1)
     converter = TrajectoryToQwenMessages(truncate_at_last_tool_call=truncate)
     try:
-        count = converter.convert_jsonl(input_path, output_path, max_samples=max_samples)
+        count = converter.convert_jsonl(
+            input_path, output_path, max_samples=max_samples
+        )
     except OSError as e:
         print(e, file=sys.stderr)
         sys.exit(1)
