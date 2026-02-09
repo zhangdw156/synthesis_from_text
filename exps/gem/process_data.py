@@ -89,6 +89,7 @@ def save_checkpoint(
     failed_info: Dict[str, Dict[str, Any]],
 ) -> None:
     """保存断点（包含重试次数）"""
+    # TODO: 可以考虑改为向关系型表里插入数据，这样就不用每次都完整写入
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     # 按 data_id 排序，保证 checkpoint 文件内容稳定
     sorted_failed = dict(sorted(failed_info.items()))
