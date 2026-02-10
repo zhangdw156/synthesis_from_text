@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from gem.llm.client import LLMClient
 from gem.models.annotation import TagAnnotation
@@ -49,7 +49,11 @@ STEP_NAMES = (
 )
 
 # 允许重试的阶段（和数据处理脚本保持一致）
-RETRYABLE_STAGES = {"workflow_discovery", "trajectory_generation", "trajectory_refinement"}
+RETRYABLE_STAGES = {
+    "workflow_discovery",
+    "trajectory_generation",
+    "trajectory_refinement",
+}
 
 # LLMClient 支持的参数
 _LLM_KEYS = ("base_url", "model_name", "api_key", "temperature", "max_tokens", "top_p")
@@ -155,10 +159,10 @@ class SynthesisPipeline:
         logger.debug("[%s] output:\n%s", step_name, text)
 
     def run(
-        self, 
-        raw_text: str, 
+        self,
+        raw_text: str,
         data_id: str | None = None,
-        start_stage: str = "tag_annotation"  # 重试时指定起始阶段
+        start_stage: str = "tag_annotation",  # 重试时指定起始阶段
     ) -> PipelineResult | PipelineFailure:
         """执行完整流水线（支持从指定阶段开始）
 
@@ -174,11 +178,13 @@ class SynthesisPipeline:
         """
         prefix = f"[data_id={data_id}] " if data_id else ""
         logger.info("=" * 60)
-        logger.info("%sStarting synthesis pipeline (start stage: %s)", prefix, start_stage)
+        logger.info(
+            "%sStarting synthesis pipeline (start stage: %s)", prefix, start_stage
+        )
         logger.info("=" * 60)
 
         # 存储中间结果（用于跨阶段传递）
-        annotation: Optional[TagAnnotation] = None
+        annotation: TagAnnotation | None = None
         workflows: list[Workflow] = []
 
         # --------------------------
@@ -203,7 +209,9 @@ class SynthesisPipeline:
             logger.info("%sRe-validate tag annotation (retry mode)", prefix)
             annotation = self.tag_annotation_step.execute(raw_text)
             if annotation is None or not annotation.multi_step:
-                logger.warning("%sRetry aborted: tag annotation failed or not multi-step", prefix)
+                logger.warning(
+                    "%sRetry aborted: tag annotation failed or not multi-step", prefix
+                )
                 return PipelineFailure(stage="tag_annotation")
 
         # Step 2: 工作流发现（起始阶段为 workflow_discovery 或更早时执行）
@@ -227,11 +235,15 @@ class SynthesisPipeline:
         last_failure_stage = "trajectory_generation"
         for i, workflow in enumerate(workflows):
             logger.info("%sProcessing workflow %s/%s", prefix, i + 1, len(workflows))
-            dialogue: Optional[Dialogue] = None
-            trajectory: Optional[Trajectory] = None
+            dialogue: Dialogue | None = None
+            trajectory: Trajectory | None = None
 
             # Step 3: 轨迹生成（起始阶段为 trajectory_generation 或更早时执行）
-            if start_stage in ["tag_annotation", "workflow_discovery", "trajectory_generation"]:
+            if start_stage in [
+                "tag_annotation",
+                "workflow_discovery",
+                "trajectory_generation",
+            ]:
                 logger.info("%s  Step 3: Trajectory generation", prefix)
                 dialogue = self.trajectory_generation_step.execute((workflow, i))
                 self._log_step_output("trajectory_generation", dialogue)
@@ -245,9 +257,16 @@ class SynthesisPipeline:
                     continue
 
             # Step 4: 轨迹优化（起始阶段为 trajectory_refinement 或更早时执行）
-            if start_stage in ["tag_annotation", "workflow_discovery", "trajectory_generation", "trajectory_refinement"]:
+            if start_stage in [
+                "tag_annotation",
+                "workflow_discovery",
+                "trajectory_generation",
+                "trajectory_refinement",
+            ]:
                 logger.info("%s  Step 4: Trajectory refinement", prefix)
-                trajectory = self.trajectory_refinement_step.execute((workflow, dialogue))
+                trajectory = self.trajectory_refinement_step.execute(
+                    (workflow, dialogue)
+                )
                 self._log_step_output("trajectory_refinement", trajectory)
                 if trajectory is None:
                     logger.warning(

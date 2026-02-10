@@ -9,15 +9,15 @@
 
 import json
 import logging
-import sys
-import time
 import sqlite3
+import sys
 import threading
+import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Set
+from typing import Any
 
 import hydra
 import pandas as pd
@@ -38,7 +38,6 @@ from gem import (  # noqa: E402 — 必须在 sys.path 与 load_dotenv 之后导
     setup_logging,
 )
 
-
 logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILENAME = "checkpoint.json"
@@ -46,7 +45,11 @@ TRAJECTORIES_FILENAME = "final_trajectories.jsonl"
 CHECKPOINT_DB_FILENAME = "checkpoint.db"  # SQLite 数据库文件
 
 # 允许重试的阶段列表
-RETRYABLE_STAGES = {"workflow_discovery", "trajectory_generation", "trajectory_refinement"}
+RETRYABLE_STAGES = {
+    "workflow_discovery",
+    "trajectory_generation",
+    "trajectory_refinement",
+}
 # 重试时的起始阶段
 RETRY_START_STAGE = "workflow_discovery"
 
@@ -83,14 +86,14 @@ def init_checkpoint_db(db_path: Path) -> None:
 def load_checkpoint(
     checkpoint_path: Path,
     checkpoint_db_path: Path,
-) -> tuple[Set[str], Dict[str, Dict[str, Any]]]:
+) -> tuple[set[str], dict[str, dict[str, Any]]]:
     """加载断点：
     - 优先从 SQLite 数据库加载
     - 兼容旧版 JSON checkpoint（加载后自动迁移到数据库）
     返回：success_ids (集合), failed_info (字典)
     """
-    success_ids: Set[str] = set()
-    failed_info: Dict[str, Dict[str, Any]] = {}
+    success_ids: set[str] = set()
+    failed_info: dict[str, dict[str, Any]] = {}
 
     # 第一步：尝试从 SQLite 数据库加载
     if checkpoint_db_path.exists():
@@ -108,7 +111,9 @@ def load_checkpoint(
                     for row in cursor.fetchall()
                 }
                 conn.close()
-            logger.info(f"Loaded checkpoint from SQLite DB: {len(success_ids)} success, {len(failed_info)} failed")
+            logger.info(
+                f"Loaded checkpoint from SQLite DB: {len(success_ids)} success, {len(failed_info)} failed"
+            )
             return success_ids, failed_info
         except sqlite3.Error as e:
             logger.warning("Failed to load checkpoint from DB: %s, fallback to JSON", e)
@@ -119,7 +124,7 @@ def load_checkpoint(
             with open(checkpoint_path, encoding="utf-8") as f:
                 data = json.load(f)
             success_ids = set(data.get("success_ids", []))
-            
+
             # 兼容旧版 checkpoint 结构
             if "failed_info" in data:
                 failed_info = data["failed_info"]
@@ -131,7 +136,9 @@ def load_checkpoint(
                     data_id: {"stage": stage, "retry_count": 0}
                     for data_id, stage in failed_stages.items()
                 }
-            logger.info(f"Loaded legacy JSON checkpoint: {len(success_ids)} success, {len(failed_info)} failed")
+            logger.info(
+                f"Loaded legacy JSON checkpoint: {len(success_ids)} success, {len(failed_info)} failed"
+            )
 
             # 将旧版 JSON 数据迁移到 SQLite 数据库
             if success_ids or failed_info:
@@ -140,47 +147,55 @@ def load_checkpoint(
                 logger.info("Migrated legacy JSON checkpoint to SQLite DB")
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Could not load legacy JSON checkpoint: %s", e)
-    
+
     return success_ids, failed_info
 
 
 def save_checkpoint(
-    success_ids: Set[str],
-    failed_info: Dict[str, Dict[str, Any]],
+    success_ids: set[str],
+    failed_info: dict[str, dict[str, Any]],
     checkpoint_db_path: Path,
 ) -> None:
     """保存断点到 SQLite 数据库（增量更新，避免全量写入）
     替代原有 JSON 全量写入逻辑，提升性能
     """
     init_checkpoint_db(checkpoint_db_path)
-    
+
     with DB_LOCK:
         conn = sqlite3.connect(str(checkpoint_db_path))
         cursor = conn.cursor()
-        
+
         # 1. 批量更新成功数据（INSERT OR REPLACE 保证幂等）
         success_records = [(data_id,) for data_id in success_ids]
         if success_records:
-            cursor.executemany("""
+            cursor.executemany(
+                """
                 INSERT OR REPLACE INTO success_ids (data_id)
                 VALUES (?)
-            """, success_records)
-        
+            """,
+                success_records,
+            )
+
         # 2. 批量更新失败数据
         failed_records = [
             (data_id, info["stage"], info["retry_count"])
             for data_id, info in failed_info.items()
         ]
         if failed_records:
-            cursor.executemany("""
+            cursor.executemany(
+                """
                 INSERT OR REPLACE INTO failed_info (data_id, stage, retry_count)
                 VALUES (?, ?, ?)
-            """, failed_records)
-        
+            """,
+                failed_records,
+            )
+
         conn.commit()
         conn.close()
-    
-    logger.debug(f"Saved checkpoint to DB: {len(success_ids)} success, {len(failed_info)} failed")
+
+    logger.debug(
+        f"Saved checkpoint to DB: {len(success_ids)} success, {len(failed_info)} failed"
+    )
 
 
 def load_data(cfg: DictConfig) -> pd.DataFrame:
@@ -219,13 +234,15 @@ def process_single_item(
         "final_trajectory": None,
         "failure_stage": None,
     }
-    
+
     # 确定起始阶段：首次执行用默认（tag_annotation），重试且阶段允许则从第2阶段开始
     start_stage = "tag_annotation"
     if retry_count > 0 and failure_stage in RETRYABLE_STAGES:
         start_stage = RETRY_START_STAGE
-        logger.info(f"[data_id={data_id}] Retry from stage: {start_stage} (previous failure: {failure_stage})")
-    
+        logger.info(
+            f"[data_id={data_id}] Retry from stage: {start_stage} (previous failure: {failure_stage})"
+        )
+
     try:
         out = pipeline.run(text, data_id=data_id, start_stage=start_stage)
         if isinstance(out, PipelineFailure):
@@ -235,7 +252,9 @@ def process_single_item(
         result["success"] = True
         result["final_trajectory"] = out.final_trajectory.model_dump()
     except Exception as e:
-        logger.error(f"[data_id={data_id}] Error processing (retry {retry_count}): %s", e)
+        logger.error(
+            f"[data_id={data_id}] Error processing (retry {retry_count}): %s", e
+        )
         result["failure_stage"] = "unknown"
     result["processing_time"] = time.time() - start_time
     return result
@@ -325,11 +344,11 @@ def main(cfg: DictConfig) -> None:
     # 筛选出不允许重试的失败数据（阶段不在重试列表 或 重试次数达上限）
     processed_failed_non_retryable = set()
     processed_failed_retry_limit = set()
-    
+
     for data_id, info in failed_info.items():
         stage = info["stage"]
         retry_count = info["retry_count"]
-        
+
         # 阶段不在重试列表 → 不允许重试
         if stage not in RETRYABLE_STAGES:
             processed_failed_non_retryable.add(data_id)
@@ -337,16 +356,26 @@ def main(cfg: DictConfig) -> None:
         # 阶段在重试列表但次数达上限 → 不允许重试
         elif retry_count >= max_retry_times:
             processed_failed_retry_limit.add(data_id)
-            logger.debug(f"[data_id={data_id}] Reached max retry times: {retry_count}/{max_retry_times}")
+            logger.debug(
+                f"[data_id={data_id}] Reached max retry times: {retry_count}/{max_retry_times}"
+            )
 
     # 最终待处理 = 所有数据 - 成功数据 - 不允许重试的失败数据 - 重试次数达上限的失败数据
-    processed = processed_success | processed_failed_non_retryable | processed_failed_retry_limit
+    processed = (
+        processed_success
+        | processed_failed_non_retryable
+        | processed_failed_retry_limit
+    )
     pending = df[~df["data_id"].isin(processed)].copy()
     pending = list(zip(pending["data_id"].tolist(), pending[content_col].tolist()))
-    
+
     logger.info(f"Pending items: {len(pending)}")
-    logger.info(f"  - Excluded non-retryable failed items: {len(processed_failed_non_retryable)}")
-    logger.info(f"  - Excluded retry limit reached items: {len(processed_failed_retry_limit)}")
+    logger.info(
+        f"  - Excluded non-retryable failed items: {len(processed_failed_non_retryable)}"
+    )
+    logger.info(
+        f"  - Excluded retry limit reached items: {len(processed_failed_retry_limit)}"
+    )
 
     if not pending:
         logger.info(
@@ -403,7 +432,14 @@ def main(cfg: DictConfig) -> None:
                 failure_stage = failed_info.get(data_id, {}).get("stage", None)
                 pipeline = SynthesisPipeline(pipeline_config)
                 # 传入重试次数和上次失败阶段
-                fut = executor.submit(process_single_item, data_id, text, pipeline, current_retry, failure_stage)
+                fut = executor.submit(
+                    process_single_item,
+                    data_id,
+                    text,
+                    pipeline,
+                    current_retry,
+                    failure_stage,
+                )
                 futures[fut] = data_id
                 in_flight += 1
 
@@ -465,16 +501,24 @@ def main(cfg: DictConfig) -> None:
                     )
                     # 只有允许重试的阶段才累加重试次数
                     if failure_stage in RETRYABLE_STAGES:
-                        current_retry = failed_info.get(data_id, {}).get("retry_count", 0) + 1
+                        current_retry = (
+                            failed_info.get(data_id, {}).get("retry_count", 0) + 1
+                        )
                     else:
-                        current_retry = failed_info.get(data_id, {}).get("retry_count", 0)
-                    
+                        current_retry = failed_info.get(data_id, {}).get(
+                            "retry_count", 0
+                        )
+
                     failed_info[data_id] = {
                         "stage": failure_stage,
-                        "retry_count": current_retry
+                        "retry_count": current_retry,
                     }
                     # 打印重试次数日志
-                    retry_msg = f"{current_retry}/{max_retry_times}" if failure_stage in RETRYABLE_STAGES else "non-retryable"
+                    retry_msg = (
+                        f"{current_retry}/{max_retry_times}"
+                        if failure_stage in RETRYABLE_STAGES
+                        else "non-retryable"
+                    )
                     logger.warning(
                         f"[data_id={data_id}] Failed (stage: {failure_stage}, retry count: {retry_msg})"
                     )
@@ -521,7 +565,9 @@ def main(cfg: DictConfig) -> None:
     # 按阶段统计失败数，便于分析瓶颈
     # 统计失败次数分布
     failure_stage_counts = Counter([info["stage"] for info in failed_info.values()])
-    failure_retry_counts = Counter([info["retry_count"] for info in failed_info.values()])
+    failure_retry_counts = Counter(
+        [info["retry_count"] for info in failed_info.values()]
+    )
 
     report = {
         "timestamp": datetime.now().isoformat(),
