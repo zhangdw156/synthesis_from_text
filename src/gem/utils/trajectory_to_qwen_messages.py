@@ -19,9 +19,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Qwen 工具块前后缀（与参考实现一致）
-TOOLS_HEADER = "\n\n# Tools\nYou may call one or more functions... <tools>"
-TOOLS_FOOTER = "\n</tools>\n\nFor each function call, return a json object within <tool_call></tool_call> tags."
+# Qwen 工具块前后缀(严格遵循Qwen3的 tokenizer_config.json)
+TOOLS_HEADER = "\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>"
+TOOLS_FOOTER = "\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name>, \"arguments\": <args-json-object>}\n</tool_call>"
 
 
 def _build_tools_content(toolsets: list[dict[str, Any]]) -> str:
