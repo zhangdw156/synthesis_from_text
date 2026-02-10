@@ -11,6 +11,8 @@ import json
 import logging
 import sys
 import time
+import sqlite3
+import threading
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -41,68 +43,144 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINT_FILENAME = "checkpoint.json"
 TRAJECTORIES_FILENAME = "final_trajectories.jsonl"
+CHECKPOINT_DB_FILENAME = "checkpoint.db"  # SQLite 数据库文件
 
 # 允许重试的阶段列表
 RETRYABLE_STAGES = {"workflow_discovery", "trajectory_generation", "trajectory_refinement"}
 # 重试时的起始阶段
 RETRY_START_STAGE = "workflow_discovery"
 
+# 数据库操作锁（解决多线程写入冲突）
+DB_LOCK = threading.Lock()
+
+
+def init_checkpoint_db(db_path: Path) -> None:
+    """初始化断点数据库表结构"""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with DB_LOCK:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        # 成功数据记录表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS success_ids (
+                data_id TEXT PRIMARY KEY,
+                create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        # 失败数据记录表（包含重试次数）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS failed_info (
+                data_id TEXT PRIMARY KEY,
+                stage TEXT NOT NULL,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        conn.close()
+
 
 def load_checkpoint(
     checkpoint_path: Path,
+    checkpoint_db_path: Path,
 ) -> tuple[Set[str], Dict[str, Dict[str, Any]]]:
     """加载断点：
-    - success_ids: 成功 id 集合
-    - failed_info: 失败信息字典，结构 {data_id: {"stage": 失败阶段, "retry_count": 重试次数}}
-    兼容旧版 checkpoint（仅 success_ids + failed_stages）
+    - 优先从 SQLite 数据库加载
+    - 兼容旧版 JSON checkpoint（加载后自动迁移到数据库）
+    返回：success_ids (集合), failed_info (字典)
     """
     success_ids: Set[str] = set()
     failed_info: Dict[str, Dict[str, Any]] = {}
-    
+
+    # 第一步：尝试从 SQLite 数据库加载
+    if checkpoint_db_path.exists():
+        try:
+            with DB_LOCK:
+                conn = sqlite3.connect(str(checkpoint_db_path))
+                cursor = conn.cursor()
+                # 加载成功 ID
+                cursor.execute("SELECT data_id FROM success_ids")
+                success_ids = {row[0] for row in cursor.fetchall()}
+                # 加载失败信息
+                cursor.execute("SELECT data_id, stage, retry_count FROM failed_info")
+                failed_info = {
+                    row[0]: {"stage": row[1], "retry_count": row[2]}
+                    for row in cursor.fetchall()
+                }
+                conn.close()
+            logger.info(f"Loaded checkpoint from SQLite DB: {len(success_ids)} success, {len(failed_info)} failed")
+            return success_ids, failed_info
+        except sqlite3.Error as e:
+            logger.warning("Failed to load checkpoint from DB: %s, fallback to JSON", e)
+
+    # 第二步：兼容旧版 JSON checkpoint
     if checkpoint_path.exists():
         try:
             with open(checkpoint_path, encoding="utf-8") as f:
                 data = json.load(f)
             success_ids = set(data.get("success_ids", []))
             
-            # 兼容旧版 checkpoint（仅 failed_stages 或 failed_ids）
+            # 兼容旧版 checkpoint 结构
             if "failed_info" in data:
                 failed_info = data["failed_info"]
             else:
-                # 从旧版 failed_stages 迁移
                 failed_stages = dict(data.get("failed_stages", {}))
                 if not failed_stages and data.get("failed_ids"):
                     failed_stages = {k: "unknown" for k in data["failed_ids"]}
-                # 初始化重试次数为 0
                 failed_info = {
                     data_id: {"stage": stage, "retry_count": 0}
                     for data_id, stage in failed_stages.items()
                 }
+            logger.info(f"Loaded legacy JSON checkpoint: {len(success_ids)} success, {len(failed_info)} failed")
+
+            # 将旧版 JSON 数据迁移到 SQLite 数据库
+            if success_ids or failed_info:
+                init_checkpoint_db(checkpoint_db_path)
+                save_checkpoint(success_ids, failed_info, checkpoint_db_path)
+                logger.info("Migrated legacy JSON checkpoint to SQLite DB")
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Could not load checkpoint: %s", e)
+            logger.warning("Could not load legacy JSON checkpoint: %s", e)
+    
     return success_ids, failed_info
 
 
 def save_checkpoint(
-    checkpoint_path: Path,
     success_ids: Set[str],
     failed_info: Dict[str, Dict[str, Any]],
+    checkpoint_db_path: Path,
 ) -> None:
-    """保存断点（包含重试次数）"""
-    # TODO: 可以考虑改为向关系型表里插入数据，这样就不用每次都完整写入
-    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-    # 按 data_id 排序，保证 checkpoint 文件内容稳定
-    sorted_failed = dict(sorted(failed_info.items()))
-    with open(checkpoint_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "success_ids": sorted(success_ids),
-                "failed_info": sorted_failed,
-            },
-            f,
-            ensure_ascii=False,
-            indent=0,
-        )
+    """保存断点到 SQLite 数据库（增量更新，避免全量写入）
+    替代原有 JSON 全量写入逻辑，提升性能
+    """
+    init_checkpoint_db(checkpoint_db_path)
+    
+    with DB_LOCK:
+        conn = sqlite3.connect(str(checkpoint_db_path))
+        cursor = conn.cursor()
+        
+        # 1. 批量更新成功数据（INSERT OR REPLACE 保证幂等）
+        success_records = [(data_id,) for data_id in success_ids]
+        if success_records:
+            cursor.executemany("""
+                INSERT OR REPLACE INTO success_ids (data_id)
+                VALUES (?)
+            """, success_records)
+        
+        # 2. 批量更新失败数据
+        failed_records = [
+            (data_id, info["stage"], info["retry_count"])
+            for data_id, info in failed_info.items()
+        ]
+        if failed_records:
+            cursor.executemany("""
+                INSERT OR REPLACE INTO failed_info (data_id, stage, retry_count)
+                VALUES (?, ?, ?)
+            """, failed_records)
+        
+        conn.commit()
+        conn.close()
+    
+    logger.debug(f"Saved checkpoint to DB: {len(success_ids)} success, {len(failed_info)} failed")
 
 
 def load_data(cfg: DictConfig) -> pd.DataFrame:
@@ -202,7 +280,8 @@ def main(cfg: DictConfig) -> None:
 
     output_dir = Path(cfg.output.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = output_dir / CHECKPOINT_FILENAME
+    checkpoint_path = output_dir / CHECKPOINT_FILENAME  # 兼容旧版 JSON 文件
+    checkpoint_db_path = output_dir / CHECKPOINT_DB_FILENAME  # SQLite 数据库文件
     final_output = output_dir / TRAJECTORIES_FILENAME
 
     # target_success_count missing or < 0: process all data in parquet; otherwise stop when count reached
@@ -218,7 +297,8 @@ def main(cfg: DictConfig) -> None:
     save_every_n = int(cfg.output.save_every_n_success)
 
     # 断点：已成功、失败信息（包含重试次数）
-    success_ids, failed_info = load_checkpoint(checkpoint_path)
+    # 优先从 SQLite 加载，兼容旧版 JSON 并自动迁移
+    success_ids, failed_info = load_checkpoint(checkpoint_path, checkpoint_db_path)
     current_success = len(success_ids)
     logger.info(
         "Checkpoint: %d success, %d failed (resume)",
@@ -372,7 +452,8 @@ def main(cfg: DictConfig) -> None:
                         pbar.update(1)
                     next_checkpoint_at -= 1
                     if next_checkpoint_at <= 0:
-                        save_checkpoint(checkpoint_path, success_ids, failed_info)
+                        # 保存到 SQLite 数据库（增量更新）
+                        save_checkpoint(success_ids, failed_info, checkpoint_db_path)
                         next_checkpoint_at = save_every_n
                 else:
                     new_failed += 1
@@ -397,7 +478,8 @@ def main(cfg: DictConfig) -> None:
                     logger.warning(
                         f"[data_id={data_id}] Failed (stage: {failure_stage}, retry count: {retry_msg})"
                     )
-                    save_checkpoint(checkpoint_path, success_ids, failed_info)
+                    # 实时保存失败信息到数据库（避免进程崩溃丢失）
+                    save_checkpoint(success_ids, failed_info, checkpoint_db_path)
                 if target_success is None:
                     pbar.update(1)
 
@@ -414,7 +496,8 @@ def main(cfg: DictConfig) -> None:
                 del futures[f]
 
     pbar.close()
-    save_checkpoint(checkpoint_path, success_ids, failed_info)
+    # 最终保存一次断点到数据库
+    save_checkpoint(success_ids, failed_info, checkpoint_db_path)
 
     total_time = time.time() - start_time_total
     logger.info("=" * 60)
@@ -432,7 +515,8 @@ def main(cfg: DictConfig) -> None:
         logger.info("  Avg time per item: %.1fs", total_time / total_processed)
     logger.info("Output:")
     logger.info("  Trajectories: %s", final_output)
-    logger.info("  Checkpoint: %s", checkpoint_path)
+    logger.info("  Checkpoint DB: %s", checkpoint_db_path)
+    logger.info("  Legacy Checkpoint JSON (deprecated): %s", checkpoint_path)
 
     # 按阶段统计失败数，便于分析瓶颈
     # 统计失败次数分布
