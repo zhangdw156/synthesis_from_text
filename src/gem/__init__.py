@@ -5,8 +5,6 @@
 
 __version__ = "0.1.0.dev"
 
-from gem.cli.checkpoint_analyzer import CheckpointAnalyzer
-from gem.cli.trajectory_to_qwen_messages import TrajectoryToQwenMessages
 from gem.models import (
     Dialogue,
     EvaluationResult,
@@ -32,8 +30,6 @@ __all__ = [
     "PipelineResult",
     "PipelineFailure",
     "setup_logging",
-    "CheckpointAnalyzer",
-    "TrajectoryToQwenMessages",
     "TagAnnotation",
     "Workflow",
     "Dialogue",
