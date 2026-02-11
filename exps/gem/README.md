@@ -92,10 +92,10 @@ python process_data.py
 
 在 `output.output_dir`（默认 `syn_data`）下：
 
-- **checkpoint.json** — 断点：`success_ids`、`failed_stages`（data_id -> 失败阶段名）
+- **checkpoint.db** — 断点（SQLite）：表 `success_ids`、`failed_info`（data_id, stage, retry_count）
 - **final_trajectories.jsonl** — 仅成功轨迹，每行一条：`{"data_id": "...", "trajectory": {...}}`
 
-不单独保存失败列表或中间结果；失败信息在 checkpoint 的 `failed_stages` 中。
+不单独保存失败列表或中间结果；失败信息在 checkpoint.db 的 `failed_info` 中。
 
 ## 使用第三方/服务商模型
 

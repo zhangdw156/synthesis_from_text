@@ -76,10 +76,10 @@ echo ""
 
 uv run exps/gem/process_data.py
 
-uv run -m gem.utils.checkpoint_analyzer \
-    syn_data/checkpoint.json
+uv run -m gem.cli.checkpoint_analyzer \
+    syn_data/checkpoint.db
 
-uv run -m gem.utils.trajectory_to_qwen_messages \
+uv run -m gem.cli.trajectory_to_qwen_messages \
     syn_data/final_trajectories.jsonl \
     syn_data/messages_fc.jsonl
 

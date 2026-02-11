@@ -22,7 +22,6 @@ dependencies = [
 
 [project.optional-dependencies]
 
-
 [project.scripts]
 
 [tool.hatch.version]

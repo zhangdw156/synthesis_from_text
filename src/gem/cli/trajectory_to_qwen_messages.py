@@ -6,9 +6,8 @@ assistant 的 tool_calls 转为 <tool_call>...</tool_call>，tool 角色转为�
 命令行用法（在项目根下，任选其一）::
 
     uv run trajectory-to-qwen-messages syn_data/final_trajectories.jsonl syn_data/messages.jsonl
-    uv run python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl syn_data/messages.jsonl
+    uv run python -m gem.cli.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl syn_data/messages.jsonl
 
-不要用 ``uv run src/gem/utils/trajectory_to_qwen_messages.py ...``，参数可能未传入。
 可选: ``--max-samples N``、``--no-truncate``。
 """
 
@@ -207,11 +206,11 @@ def _main() -> None:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
         print(
-            "用法: python -m gem.utils.trajectory_to_qwen_messages <合成轨迹.jsonl> <输出messages.jsonl> [--max-samples N] [--no-truncate]",
+            "用法: python -m gem.cli.trajectory_to_qwen_messages <合成轨迹.jsonl> <输出messages.jsonl> [--max-samples N] [--no-truncate]",
             file=sys.stderr,
         )
         print(
-            "示例: python -m gem.utils.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl out/messages.jsonl",
+            "示例: python -m gem.cli.trajectory_to_qwen_messages syn_data/final_trajectories.jsonl out/messages.jsonl",
             file=sys.stderr,
         )
         sys.exit(0 if "--help" in argv or "-h" in argv else 1)

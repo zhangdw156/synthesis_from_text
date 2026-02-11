@@ -5,6 +5,8 @@
 
 __version__ = "0.1.0.dev"
 
+from gem.cli.checkpoint_analyzer import CheckpointAnalyzer
+from gem.cli.trajectory_to_qwen_messages import TrajectoryToQwenMessages
 from gem.models import (
     Dialogue,
     EvaluationResult,
@@ -21,7 +23,7 @@ from gem.pipeline import (
     PipelineResult,
     SynthesisPipeline,
 )
-from gem.utils import CheckpointAnalyzer, TrajectoryToQwenMessages, setup_logging
+from gem.utils import setup_logging
 
 __all__ = [
     "__version__",

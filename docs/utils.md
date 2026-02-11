@@ -15,24 +15,24 @@ setup_logging(level="INFO", log_file="logs/app.log")
 setup_logging(**cfg.logging)
 ```
 
-## checkpoint_analyzer — Checkpoint 分析
+## checkpoint_analyzer — Checkpoint 分析（CLI）
 
 **`CheckpointAnalyzer(path=...)` / `CheckpointAnalyzer(data=...)`**
 
-解析 GEM 实验的 `checkpoint.json`（含 `success_ids`、`failed_stages`），统计成功/失败条数及各阶段失败分布。
+解析 GEM 实验的 `checkpoint.db`（SQLite：表 success_ids、failed_info），统计成功/失败条数、各阶段失败分布及重试次数分布。
 
-- **属性**：`total_success`、`total_failed`、`total_processed`、`success_ids`、`failed_stages`
-- **方法**：`failed_by_stage()`（按阶段失败数）、`summary()`（汇总字典）
+- **属性**：`total_success`、`total_failed`、`total_processed`、`success_ids`、`failed_info`
+- **方法**：`failed_by_stage()`、`failed_by_retry_count()`、`summary()`（汇总字典）
 
 **命令行**（在项目根下）：
 
 ```bash
-uv run python -m gem.utils.checkpoint_analyzer syn_data/checkpoint.json
-uv run python -m gem.utils.checkpoint_analyzer syn_data/checkpoint.json --json
-uv run python -m gem.utils.checkpoint_analyzer --help
+uv run python -m gem.cli.checkpoint_analyzer syn_data/checkpoint.db
+uv run python -m gem.cli.checkpoint_analyzer syn_data/checkpoint.db --json
+uv run python -m gem.cli.checkpoint_analyzer --help
 ```
 
-## trajectory_to_qwen_messages — 轨迹转 Qwen messages
+## trajectory_to_qwen_messages — 轨迹转 Qwen messages（CLI）
 
 **`TrajectoryToQwenMessages(truncate_at_last_tool_call=True)`**
 

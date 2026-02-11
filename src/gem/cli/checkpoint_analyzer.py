@@ -1,11 +1,10 @@
-"""分析 checkpoint 文件（JSON/DB）：成功/失败数量、各阶段失败分布、重试次数分布等。
+"""分析 checkpoint 文件（SQLite .db）：成功/失败数量、各阶段失败分布、重试次数分布等。
 
 命令行用法（在项目根下）::
 
-    uv run python -m gem.utils.checkpoint_analyzer syn_data/checkpoint.json
-    uv run python -m gem.utils.checkpoint_analyzer syn_data/checkpoint.db
-    uv run python -m gem.utils.checkpoint_analyzer syn_data/checkpoint.json --json
-    uv run python -m gem.utils.checkpoint_analyzer --help
+    uv run python -m gem.cli.checkpoint_analyzer syn_data/checkpoint.db
+    uv run python -m gem.cli.checkpoint_analyzer syn_data/checkpoint.db --json
+    uv run python -m gem.cli.checkpoint_analyzer --help
 """
 
 from __future__ import annotations
@@ -19,73 +18,35 @@ from typing import Any
 
 
 class CheckpointAnalyzer:
-    """分析 GEM 实验的 checkpoint 结果（支持 JSON/DB 格式）。
+    """分析 GEM 实验的 checkpoint 结果（仅 SQLite .db）。
 
-    支持格式：
-    - 旧版：checkpoint.json（success_ids、failed_info/failed_stages/failed_ids）
-    - 新版：checkpoint.db（SQLite 数据库）
+    表：success_ids (data_id)、failed_info (data_id, stage, retry_count)。
     """
 
     def __init__(
         self, path: str | Path | None = None, data: dict[str, Any] | None = None
     ) -> None:
-        """从文件（JSON/DB）或已有字典加载。
+        """从 .db 文件或已有字典加载。
 
         Args:
-            path: checkpoint 文件路径（.json 或 .db）；与 data 二选一。
-            data: 已解析的 checkpoint 字典；与 path 二选一。
+            path: checkpoint.db 路径；与 data 二选一。
+            data: 已解析的 checkpoint 字典（success_ids、failed_info）；与 path 二选一。
         """
         if path is not None and data is not None:
             raise ValueError("path 与 data 只能指定其一")
 
         self._success_ids: set[str] = set()
-        self._failed_info: dict[
-            str, dict[str, Any]
-        ] = {}  # {data_id: {"stage": str, "retry_count": int}}
+        self._failed_info: dict[str, dict[str, Any]] = {}
 
-        # 从文件加载
         if path is not None:
             path = Path(path)
             if not path.exists():
                 raise FileNotFoundError(f"checkpoint 文件不存在: {path}")
-
-            # 根据后缀判断文件类型
-            if path.suffix.lower() == ".json":
-                self._load_from_json(path)
-            elif path.suffix.lower() == ".db":
-                self._load_from_db(path)
-            else:
-                raise ValueError(f"不支持的文件类型: {path.suffix} (仅支持 .json/.db)")
-
-        # 从已有字典加载（兼容旧逻辑）
+            if path.suffix.lower() != ".db":
+                raise ValueError("仅支持 .db 文件 (SQLite)")
+            self._load_from_db(path)
         elif data is not None:
             self._load_from_dict(data)
-
-    def _load_from_json(self, path: Path) -> None:
-        """从 JSON 文件加载 checkpoint 数据"""
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-
-        # 加载成功 ID
-        self._success_ids = set(data.get("success_ids", []))
-
-        # 兼容不同版本的失败信息格式
-        failed_info = dict(data.get("failed_info", {}))
-        if not failed_info:
-            # 旧版：failed_stages (data_id -> stage)
-            failed_stages = dict(data.get("failed_stages", {}))
-            if failed_stages:
-                failed_info = {
-                    k: {"stage": v, "retry_count": 0} for k, v in failed_stages.items()
-                }
-            # 更旧版：仅 failed_ids 列表
-            elif "failed_ids" in data:
-                failed_info = {
-                    k: {"stage": "unknown", "retry_count": 0}
-                    for k in data["failed_ids"]
-                }
-
-        self._failed_info = failed_info
 
     def _load_from_db(self, path: Path) -> None:
         """从 SQLite 数据库加载 checkpoint 数据"""
@@ -109,14 +70,10 @@ class CheckpointAnalyzer:
             raise RuntimeError(f"读取数据库失败: {e}") from e
 
     def _load_from_dict(self, data: dict[str, Any]) -> None:
-        """从字典加载（兼容原有逻辑）"""
+        """从字典加载：success_ids、failed_info（每项为 {stage, retry_count}）。"""
         self._success_ids = set(data.get("success_ids", []))
-        failed_info = dict(data.get("failed_info", {}))
-        # 转换为标准格式
-        for data_id, info in failed_info.items():
-            if isinstance(info, str):  # 旧格式：仅阶段名
-                self._failed_info[data_id] = {"stage": info, "retry_count": 0}
-            else:  # 新格式：包含 stage + retry_count
+        for data_id, info in (data.get("failed_info") or {}).items():
+            if isinstance(info, dict):
                 self._failed_info[data_id] = {
                     "stage": info.get("stage", "unknown"),
                     "retry_count": info.get("retry_count", 0),
@@ -191,23 +148,15 @@ def _main() -> None:
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-h", "--help"):
         print(
-            "用法: python -m gem.utils.checkpoint_analyzer <checkpoint文件> [--json]",
+            "用法: python -m gem.cli.checkpoint_analyzer <checkpoint.db> [--json]",
             file=sys.stderr,
         )
         print(
-            "支持文件类型: .json (旧版) / .db (新版SQLite)",
+            "参数: checkpoint.db (SQLite 断点文件)",
             file=sys.stderr,
         )
         print(
-            "示例:",
-            file=sys.stderr,
-        )
-        print(
-            "  python -m gem.utils.checkpoint_analyzer syn_data/checkpoint.json",
-            file=sys.stderr,
-        )
-        print(
-            "  python -m gem.utils.checkpoint_analyzer syn_data/checkpoint.db --json",
+            "示例: python -m gem.cli.checkpoint_analyzer syn_data/checkpoint.db",
             file=sys.stderr,
         )
         sys.exit(0 if "--help" in argv or "-h" in argv else 1)
